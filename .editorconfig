@@ -1,5 +1,6 @@
 root = true
 
+
 [*]
 charset = utf-8
 indent_style = space
@@ -12,3 +13,4 @@ indent_style = tab
 
 [*.go]
 indent_size = 4
+indent_style = tab
