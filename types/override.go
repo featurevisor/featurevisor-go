@@ -1,8 +1,8 @@
 package types
 
 type OverrideFeature struct {
-	Enabled   bool                     `json:"enabled"`
-	Variation *VariationValue           `json:"variation,omitempty"`
+	Enabled   *bool                    `json:"enabled"`
+	Variation *VariationValue          `json:"variation,omitempty"`
 	Variables map[VariableKey]VariableValue `json:"variables,omitempty"`
 }
 

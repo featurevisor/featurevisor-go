@@ -157,7 +157,7 @@ func (i *FeaturevisorInstance) EvaluateFlag(featureKey types.FeatureKey, context
 						enabled = *matchedTraffic.Enabled
 					}
 					evaluation.Reason = EvaluationReasonAllocated
-					evaluation.RuleKey = matchedTraffic.Key
+					evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 					evaluation.Traffic = matchedTraffic
 					evaluation.Enabled = &enabled
 					i.logger.Debug("matched", LogDetails{"evaluation": evaluation})
@@ -174,7 +174,7 @@ func (i *FeaturevisorInstance) EvaluateFlag(featureKey types.FeatureKey, context
 		// Override from rule
 		if matchedTraffic.Enabled != nil {
 			evaluation.Reason = EvaluationReasonOverride
-			evaluation.RuleKey = matchedTraffic.Key
+			evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 			evaluation.Traffic = matchedTraffic
 			evaluation.Enabled = matchedTraffic.Enabled
 			i.logger.Debug("override from rule", LogDetails{"evaluation": evaluation})

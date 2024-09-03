@@ -9,7 +9,7 @@ type EnvironmentKey string
 type RuleKey string
 
 type Rule struct {
-	Key        RuleKey          `json:"key"`
+	Key        string           `json:"key"`
 	Segments   json.RawMessage  `json:"segments"`
 	Percentage Weight           `json:"percentage"`
 	Enabled    *bool            `json:"enabled,omitempty"`

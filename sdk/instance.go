@@ -3,7 +3,11 @@ package sdk
 import (
 	"sync"
 	"time"
+	"encoding/json"
+	"errors"
+)
 
+import (
 	"github.com/featurevisor/featurevisor-go/types"
 )
 
@@ -155,7 +159,7 @@ func (i *FeaturevisorInstance) fetchAndSetDatafile() {
 	i.emitter.Emit(EventReady)
 
 	if i.refreshInterval > 0 {
-		i.startRefreshing()
+		i.StartRefreshing() // Change to StartRefreshing (capital S)
 	}
 }
 
