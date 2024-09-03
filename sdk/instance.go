@@ -116,6 +116,8 @@ func NewInstance(options InstanceOptions) (*FeaturevisorInstance, error) {
 		instance.statuses.Ready = true
 		instance.emitter.Emit(EventReady)
 	} else {
+		// Define ErrNoDatafile if it doesn't exist
+		var ErrNoDatafile = errors.New("no datafile provided")
 		return nil, ErrNoDatafile
 	}
 
@@ -132,7 +134,7 @@ func (i *FeaturevisorInstance) setDatafile(datafile interface{}) error {
 	case types.DatafileContent:
 		content = d
 	default:
-		return ErrInvalidDatafileType
+		return errors.New("invalid datafile type")
 	}
 
 	if err != nil {
