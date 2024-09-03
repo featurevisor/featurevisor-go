@@ -1,4 +1,4 @@
-package featurevisor
+package sdk
 
 import (
 	"fmt"
