@@ -16,7 +16,7 @@ func (f *FeaturevisorInstance) EvaluateVariation(featureKey interface{}, context
 
 	// Check sticky features
 	if f.stickyFeatures != nil {
-		if stickyFeature, ok := f.stickyFeatures[string(evaluation.FeatureKey)]; ok {
+		if stickyFeature, ok := f.stickyFeatures[evaluation.FeatureKey]; ok {
 			if stickyFeature.Variation != nil {
 				evaluation.Reason = EvaluationReasonSticky
 				evaluation.VariationValue = stickyFeature.Variation
@@ -28,7 +28,7 @@ func (f *FeaturevisorInstance) EvaluateVariation(featureKey interface{}, context
 
 	// Check initial features
 	if !f.IsReady() && f.initialFeatures != nil {
-		if initialFeature, ok := f.initialFeatures[string(evaluation.FeatureKey)]; ok {
+		if initialFeature, ok := f.initialFeatures[evaluation.FeatureKey]; ok {
 			if initialFeature.Variation != nil {
 				evaluation.Reason = EvaluationReasonInitial
 				evaluation.VariationValue = initialFeature.Variation

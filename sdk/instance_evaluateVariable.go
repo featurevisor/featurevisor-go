@@ -21,9 +21,9 @@ func (f *FeaturevisorInstance) EvaluateVariable(featureKey interface{}, variable
 
 	// Check sticky features
 	if f.stickyFeatures != nil {
-		if stickyFeature, ok := f.stickyFeatures[string(evaluation.FeatureKey)]; ok {
+		if stickyFeature, ok := f.stickyFeatures[evaluation.FeatureKey]; ok {
 			if stickyFeature.Variables != nil {
-				if value, exists := stickyFeature.Variables[string(variableKey)]; exists {
+				if value, exists := stickyFeature.Variables[variableKey]; exists {
 					evaluation.Reason = EvaluationReasonSticky
 					evaluation.VariableValue = value
 					f.logger.Debug("using sticky variable", LogDetails{"evaluation": evaluation})
@@ -35,9 +35,9 @@ func (f *FeaturevisorInstance) EvaluateVariable(featureKey interface{}, variable
 
 	// Check initial features
 	if !f.IsReady() && f.initialFeatures != nil {
-		if initialFeature, ok := f.initialFeatures[string(evaluation.FeatureKey)]; ok {
+		if initialFeature, ok := f.initialFeatures[evaluation.FeatureKey]; ok {
 			if initialFeature.Variables != nil {
-				if value, exists := initialFeature.Variables[string(variableKey)]; exists {
+				if value, exists := initialFeature.Variables[variableKey]; exists {
 					evaluation.Reason = EvaluationReasonInitial
 					evaluation.VariableValue = value
 					f.logger.Debug("using initial variable", LogDetails{"evaluation": evaluation})

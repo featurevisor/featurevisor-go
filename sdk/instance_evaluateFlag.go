@@ -71,7 +71,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 		return evaluation
 	}
 
-	if feature.Deprecated {
+	if feature.Deprecated != nil && *feature.Deprecated {
 		f.logger.Warn("feature is deprecated", LogDetails{"featureKey": feature.Key})
 	}
 
@@ -82,7 +82,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 
 	// Check sticky features
 	if f.stickyFeatures != nil {
-		if stickyFeature, ok := f.stickyFeatures[string(evaluation.FeatureKey)]; ok && stickyFeature.Enabled != nil {
+		if stickyFeature, ok := f.stickyFeatures[evaluation.FeatureKey]; ok && stickyFeature.Enabled != nil {
 			evaluation.Reason = EvaluationReasonSticky
 			evaluation.Sticky = &stickyFeature
 			evaluation.Enabled = stickyFeature.Enabled
@@ -93,7 +93,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 
 	// Check initial features
 	if !f.IsReady() && f.initialFeatures != nil {
-		if initialFeature, ok := f.initialFeatures[string(evaluation.FeatureKey)]; ok {
+		if initialFeature, ok := f.initialFeatures[evaluation.FeatureKey]; ok {
 			if initialFeature.Enabled != nil {
 				evaluation.Reason = EvaluationReasonInitial
 				evaluation.Initial = &initialFeature
