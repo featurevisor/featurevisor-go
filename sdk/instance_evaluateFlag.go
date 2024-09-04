@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"fmt"
 	"github.com/featurevisor/featurevisor-go/types"
 )
 
@@ -81,14 +82,12 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 
 	// Check sticky features
 	if f.stickyFeatures != nil {
-		if stickyFeature, ok := f.stickyFeatures[string(evaluation.FeatureKey)]; ok {
-			if stickyFeature.Enabled != nil {
-				evaluation.Reason = EvaluationReasonSticky
-				evaluation.Sticky = &stickyFeature
-				evaluation.Enabled = stickyFeature.Enabled
-				f.logger.Debug("using sticky enabled", LogDetails{"evaluation": evaluation})
-				return evaluation
-			}
+		if stickyFeature, ok := f.stickyFeatures[string(evaluation.FeatureKey)]; ok && stickyFeature.Enabled != nil {
+			evaluation.Reason = EvaluationReasonSticky
+			evaluation.Sticky = &stickyFeature
+			evaluation.Enabled = stickyFeature.Enabled
+			f.logger.Debug("using sticky enabled", LogDetails{"evaluation": evaluation})
+			return evaluation
 		}
 	}
 

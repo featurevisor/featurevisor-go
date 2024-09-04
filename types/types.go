@@ -1,6 +1,12 @@
 package types
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
+
+type BucketKey string
+type BucketValue int // 0 to 100,000 (100% * 1000 to include three decimal places in same integer)
 
 type AttributeKey string
 type AttributeValue interface{}

@@ -138,7 +138,7 @@ func (f *FeaturevisorInstance) startRefreshing() {
 	ticker := time.NewTicker(time.Duration(f.refreshInterval) * time.Second)
 	go func() {
 		for range ticker.C {
-			f.refresh()
+			f.Refresh()
 		}
 	}()
 }
