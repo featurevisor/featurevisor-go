@@ -18,7 +18,7 @@ func (f *FeaturevisorInstance) Activate(featureKey interface{}, context types.Co
 		captureContext := make(types.Context)
 		attributes := f.datafileReader.GetAllAttributes()
 		for _, attr := range attributes {
-			if attr.Capture {
+			if attr.Capture != nil && *attr.Capture {
 				if value, ok := finalContext[attr.Key]; ok {
 					captureContext[attr.Key] = value
 				}
