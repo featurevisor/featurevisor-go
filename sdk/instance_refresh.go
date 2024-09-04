@@ -1,99 +1,45 @@
 package sdk
 
-import (
-	"time"
-)
+// Refresh triggers a manual refresh of the datafile
+func (f *FeaturevisorInstance) Refresh() {
+	f.logger.Debug("refreshing datafile", nil)
 
-func (i *FeaturevisorInstance) Refresh() {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
-	i.logger.Debug("refreshing datafile")
-
-	if i.statuses.RefreshInProgress {
-		i.logger.Warn("refresh in progress, skipping")
+	if f.statuses.RefreshInProgress {
+		f.logger.Warn("refresh in progress, skipping", nil)
 		return
 	}
 
-	if i.datafileURL == "" {
-		i.logger.Error("cannot refresh since `datafileURL` is not provided")
+	if f.datafileURL == "" {
+		f.logger.Error("cannot refresh since `datafileUrl` is not provided", nil)
 		return
 	}
 
-	i.statuses.RefreshInProgress = true
+	f.statuses.RefreshInProgress = true
 
-	go func() {
-		content, err := i.handleDatafileFetch(i.datafileURL)
-		if err != nil {
-			i.logger.Error("failed to refresh datafile", LogDetails{"error": err})
-			i.mu.Lock()
-			i.statuses.RefreshInProgress = false
-			i.mu.Unlock()
-			return
-		}
-
-		i.mu.Lock()
-		currentRevision := i.datafileReader.GetRevision()
-		err = i.setDatafile(content)
-		if err != nil {
-			i.logger.Error("failed to set datafile", LogDetails{"error": err})
-			i.statuses.RefreshInProgress = false
-			i.mu.Unlock()
-			return
-		}
-
-		newRevision := i.datafileReader.GetRevision()
-		isNotSameRevision := currentRevision != newRevision
-
-		i.logger.Info("refreshed datafile")
-		i.emitter.Emit(EventRefresh)
-
-		if isNotSameRevision {
-			i.emitter.Emit(EventUpdate)
-		}
-
-		i.statuses.RefreshInProgress = false
-		i.mu.Unlock()
-	}()
-}
-
-func (i *FeaturevisorInstance) StartRefreshing() {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
-	if i.datafileURL == "" {
-		i.logger.Error("cannot start refreshing since `datafileURL` is not provided")
+	datafile, err := f.fetchDatafileContent(f.datafileURL, f.handleDatafileFetch)
+	if err != nil {
+		f.logger.Error("failed to refresh datafile", LogDetails{"error": err})
+		f.statuses.RefreshInProgress = false
 		return
 	}
 
-	if i.refreshTicker != nil {
-		i.logger.Warn("refreshing has already started")
+	currentRevision := f.datafileReader.GetRevision()
+	newRevision := datafile.Revision
+	isNotSameRevision := currentRevision != newRevision
+
+	if err := f.setDatafile(datafile); err != nil {
+		f.logger.Error("failed to set refreshed datafile", LogDetails{"error": err})
+		f.statuses.RefreshInProgress = false
 		return
 	}
 
-	if i.refreshInterval == 0 {
-		i.logger.Warn("no `refreshInterval` option provided")
-		return
+	f.logger.Info("refreshed datafile", nil)
+
+	f.emitter.Emit(EventRefresh)
+
+	if isNotSameRevision {
+		f.emitter.Emit(EventUpdate)
 	}
 
-	i.refreshTicker = time.NewTicker(i.refreshInterval)
-
-	go func() {
-		for range i.refreshTicker.C {
-			i.Refresh()
-		}
-	}()
-}
-
-func (i *FeaturevisorInstance) StopRefreshing() {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-
-	if i.refreshTicker == nil {
-		i.logger.Warn("refreshing has not started yet")
-		return
-	}
-
-	i.refreshTicker.Stop()
-	i.refreshTicker = nil
+	f.statuses.RefreshInProgress = false
 }

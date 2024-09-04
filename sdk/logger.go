@@ -44,36 +44,46 @@ var defaultLogHandler = func(level LogLevel, message LogMessage, details LogDeta
 	}
 }
 
-type Logger struct {
-	Levels  []LogLevel
-	Handler LogHandler
+type Logger interface {
+	SetLevels(levels []LogLevel)
+	Log(level LogLevel, message LogMessage, details LogDetails)
+	Debug(message LogMessage, details LogDetails)
+	Info(message LogMessage, details LogDetails)
+	Warn(message LogMessage, details LogDetails)
+	Error(message LogMessage, details LogDetails)
 }
 
-func (l *Logger) SetLevels(levels []LogLevel) {
-	l.Levels = levels
+type logger struct {
+	levels  []LogLevel
+	handler LogHandler
 }
 
-func (l *Logger) Log(level LogLevel, message LogMessage, details LogDetails) {
-	for _, logLevel := range l.Levels {
+func (l *logger) SetLevels(levels []LogLevel) {
+	l.levels = levels
+}
+
+func (l *logger) Log(level LogLevel, message LogMessage, details LogDetails) {
+	for _, logLevel := range l.levels {
 		if logLevel == level {
-			l.Handler(level, message, details)
+			l.handler(level, message, details)
+			break
 		}
 	}
 }
 
-func (l *Logger) Debug(message LogMessage, details LogDetails) {
+func (l *logger) Debug(message LogMessage, details LogDetails) {
 	l.Log(Debug, message, details)
 }
 
-func (l *Logger) Info(message LogMessage, details LogDetails) {
+func (l *logger) Info(message LogMessage, details LogDetails) {
 	l.Log(Info, message, details)
 }
 
-func (l *Logger) Warn(message LogMessage, details LogDetails) {
+func (l *logger) Warn(message LogMessage, details LogDetails) {
 	l.Log(Warn, message, details)
 }
 
-func (l *Logger) Error(message LogMessage, details LogDetails) {
+func (l *logger) Error(message LogMessage, details LogDetails) {
 	l.Log(Error, message, details)
 }
 
@@ -88,5 +98,5 @@ func CreateLogger(options CreateLoggerOptions) Logger {
 		handler = defaultLogHandler
 	}
 
-	return Logger{Levels: levels, Handler: handler}
+	return &logger{levels: levels, handler: handler}
 }

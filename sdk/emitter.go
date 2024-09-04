@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"reflect"
 	"sync"
 )
 
@@ -16,27 +17,27 @@ const (
 type Listener func(...interface{})
 
 type Emitter struct {
-	listeners map[EventName][]Listener
+	listeners map[EventName][]interface{}
 	mu        sync.RWMutex
 }
 
 func NewEmitter() *Emitter {
 	return &Emitter{
-		listeners: make(map[EventName][]Listener),
+		listeners: make(map[EventName][]interface{}),
 	}
 }
 
-func (e *Emitter) AddListener(eventName EventName, fn Listener) {
+func (e *Emitter) AddListener(eventName EventName, listener interface{}) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.listeners[eventName] == nil {
-		e.listeners[eventName] = []Listener{}
+		e.listeners[eventName] = []interface{}{}
 	}
-	e.listeners[eventName] = append(e.listeners[eventName], fn)
+	e.listeners[eventName] = append(e.listeners[eventName], listener)
 }
 
-func (e *Emitter) RemoveListener(eventName EventName, fn Listener) {
+func (e *Emitter) RemoveListener(eventName EventName, listener interface{}) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -44,8 +45,8 @@ func (e *Emitter) RemoveListener(eventName EventName, fn Listener) {
 		return
 	}
 
-	for i, listener := range e.listeners[eventName] {
-		if &listener == &fn {
+	for i, l := range e.listeners[eventName] {
+		if reflect.ValueOf(l).Pointer() == reflect.ValueOf(listener).Pointer() {
 			e.listeners[eventName] = append(e.listeners[eventName][:i], e.listeners[eventName][i+1:]...)
 			break
 		}
@@ -57,11 +58,9 @@ func (e *Emitter) RemoveAllListeners(eventName *EventName) {
 	defer e.mu.Unlock()
 
 	if eventName != nil {
-		e.listeners[*eventName] = nil
+		delete(e.listeners, *eventName)
 	} else {
-		for name := range e.listeners {
-			e.listeners[name] = nil
-		}
+		e.listeners = make(map[EventName][]interface{})
 	}
 }
 
@@ -74,6 +73,14 @@ func (e *Emitter) Emit(eventName EventName, args ...interface{}) {
 	}
 
 	for _, listener := range e.listeners[eventName] {
-		listener(args...)
+		reflect.ValueOf(listener).Call(makeArgs(args))
 	}
+}
+
+func makeArgs(args []interface{}) []reflect.Value {
+	var reflectArgs []reflect.Value
+	for _, arg := range args {
+		reflectArgs = append(reflectArgs, reflect.ValueOf(arg))
+	}
+	return reflectArgs
 }

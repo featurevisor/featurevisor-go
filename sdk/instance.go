@@ -1,92 +1,85 @@
 package sdk
 
 import (
-	"sync"
-	"time"
-	"encoding/json"
 	"errors"
-)
+	"time"
 
-import (
 	"github.com/featurevisor/featurevisor-go/types"
 )
 
-type ConfigureBucketKey func(feature *types.Feature, context types.Context, bucketKey string) string
-type ConfigureBucketValue func(feature *types.Feature, context types.Context, bucketValue int) int
+type ReadyCallback func()
+type ActivationCallback func(featureName string, variation types.VariationValue, context types.Context, captureContext types.Context)
+type ConfigureBucketKey func(feature types.Feature, context types.Context, bucketKey types.BucketKey) types.BucketKey
+type ConfigureBucketValue func(feature types.Feature, context types.Context, bucketValue types.BucketValue) types.BucketValue
+type InterceptContext func(context types.Context) types.Context
 
 type Statuses struct {
 	Ready             bool
 	RefreshInProgress bool
 }
 
+type InstanceOptions struct {
+	BucketKeySeparator   string
+	ConfigureBucketKey   ConfigureBucketKey
+	ConfigureBucketValue ConfigureBucketValue
+	Datafile             interface{}
+	DatafileURL          string
+	HandleDatafileFetch  func(datafileURL string) (types.DatafileContent, error)
+	InitialFeatures      types.InitialFeatures
+	InterceptContext     InterceptContext
+	Logger               Logger
+	OnActivation         ActivationCallback
+	OnReady              ReadyCallback
+	OnRefresh            func()
+	OnUpdate             func()
+	RefreshInterval      int // seconds
+	StickyFeatures       types.StickyFeatures
+}
+
 type FeaturevisorInstance struct {
-	bucketKeySeparator  string
-	configureBucketKey  ConfigureBucketKey
+	bucketKeySeparator   string
+	configureBucketKey   ConfigureBucketKey
 	configureBucketValue ConfigureBucketValue
-	datafileURL         string
-	handleDatafileFetch func(string) (types.DatafileContent, error)
-	initialFeatures     types.InitialFeatures
-	interceptContext    func(types.Context) types.Context
-	logger              Logger
-	refreshInterval     time.Duration
-	stickyFeatures      types.StickyFeatures
+	datafileURL          string
+	handleDatafileFetch  func(datafileURL string) (types.DatafileContent, error)
+	initialFeatures      types.InitialFeatures
+	interceptContext     InterceptContext
+	logger               Logger
+	refreshInterval      int
+	stickyFeatures       types.StickyFeatures
 
 	datafileReader *DatafileReader
 	emitter        *Emitter
 	statuses       Statuses
-	refreshTicker  *time.Ticker
-	mu             sync.RWMutex
 }
 
-type InstanceOptions struct {
-	BucketKeySeparator  string
-	ConfigureBucketKey  ConfigureBucketKey
-	ConfigureBucketValue ConfigureBucketValue
-	Datafile            interface{}
-	DatafileURL         string
-	HandleDatafileFetch func(string) (types.DatafileContent, error)
-	InitialFeatures     types.InitialFeatures
-	InterceptContext    func(types.Context) types.Context
-	Logger              Logger
-	OnActivation        func(string, types.VariationValue, types.Context, types.Context)
-	OnReady             func()
-	OnRefresh           func()
-	OnUpdate            func()
-	RefreshInterval     time.Duration
-	StickyFeatures      types.StickyFeatures
-}
-
-func NewInstance(options InstanceOptions) (*FeaturevisorInstance, error) {
+func CreateInstance(options InstanceOptions) (*FeaturevisorInstance, error) {
 	instance := &FeaturevisorInstance{
-		bucketKeySeparator:  options.BucketKeySeparator,
-		configureBucketKey:  options.ConfigureBucketKey,
+		bucketKeySeparator:   options.BucketKeySeparator,
+		configureBucketKey:   options.ConfigureBucketKey,
 		configureBucketValue: options.ConfigureBucketValue,
-		datafileURL:         options.DatafileURL,
-		handleDatafileFetch: options.HandleDatafileFetch,
-		initialFeatures:     options.InitialFeatures,
-		interceptContext:    options.InterceptContext,
-		logger:              options.Logger,
-		refreshInterval:     options.RefreshInterval,
-		stickyFeatures:      options.StickyFeatures,
-		emitter:             NewEmitter(),
+		datafileURL:          options.DatafileURL,
+		handleDatafileFetch:  options.HandleDatafileFetch,
+		initialFeatures:      options.InitialFeatures,
+		interceptContext:     options.InterceptContext,
+		logger:               options.Logger,
+		refreshInterval:      options.RefreshInterval,
+		stickyFeatures:       options.StickyFeatures,
+
+		emitter:  NewEmitter(),
+		statuses: Statuses{Ready: false, RefreshInProgress: false},
 	}
 
 	if options.OnReady != nil {
-		instance.emitter.AddListener(EventReady, func(...interface{}) {
-			options.OnReady()
-		})
+		instance.emitter.AddListener(EventReady, func(...interface{}) { options.OnReady() })
 	}
 
 	if options.OnRefresh != nil {
-		instance.emitter.AddListener(EventRefresh, func(...interface{}) {
-			options.OnRefresh()
-		})
+		instance.emitter.AddListener(EventRefresh, func(...interface{}) { options.OnRefresh() })
 	}
 
 	if options.OnUpdate != nil {
-		instance.emitter.AddListener(EventUpdate, func(...interface{}) {
-			options.OnUpdate()
-		})
+		instance.emitter.AddListener(EventUpdate, func(...interface{}) { options.OnUpdate() })
 	}
 
 	if options.OnActivation != nil {
@@ -102,124 +95,50 @@ func NewInstance(options InstanceOptions) (*FeaturevisorInstance, error) {
 		})
 	}
 
-	// Initialize datafile
 	if options.DatafileURL != "" {
 		if err := instance.setDatafile(options.Datafile); err != nil {
 			return nil, err
 		}
 
-		go instance.fetchAndSetDatafile()
+		go func() {
+			datafile, err := instance.fetchDatafileContent(options.DatafileURL, options.HandleDatafileFetch)
+			if err != nil {
+				instance.logger.Error("failed to fetch datafile", LogDetails{"error": err})
+				return
+			}
+
+			if err := instance.setDatafile(datafile); err != nil {
+				instance.logger.Error("failed to set datafile", LogDetails{"error": err})
+				return
+			}
+
+			instance.statuses.Ready = true
+			instance.emitter.Emit(EventReady)
+
+			if instance.refreshInterval > 0 {
+				instance.startRefreshing()
+			}
+		}()
 	} else if options.Datafile != nil {
 		if err := instance.setDatafile(options.Datafile); err != nil {
 			return nil, err
 		}
 		instance.statuses.Ready = true
-		instance.emitter.Emit(EventReady)
+		go instance.emitter.Emit(EventReady)
 	} else {
-		// Define ErrNoDatafile if it doesn't exist
-		var ErrNoDatafile = errors.New("no datafile provided")
-		return nil, ErrNoDatafile
+		return nil, errors.New("Featurevisor SDK instance cannot be created without both `datafile` and `datafileUrl` options")
 	}
 
 	return instance, nil
 }
 
-func (i *FeaturevisorInstance) setDatafile(datafile interface{}) error {
-	var content types.DatafileContent
-	var err error
+// Private helper functions
 
-	switch d := datafile.(type) {
-	case string:
-		err = json.Unmarshal([]byte(d), &content)
-	case types.DatafileContent:
-		content = d
-	default:
-		return errors.New("invalid datafile type")
-	}
-
-	if err != nil {
-		i.logger.Error("could not parse datafile", LogDetails{"error": err})
-		return err
-	}
-
-	i.datafileReader = NewDatafileReader(content)
-	return nil
-}
-
-func (i *FeaturevisorInstance) fetchAndSetDatafile() {
-	content, err := i.handleDatafileFetch(i.datafileURL)
-	if err != nil {
-		i.logger.Error("failed to fetch datafile", LogDetails{"error": err})
-		return
-	}
-
-	if err := i.setDatafile(content); err != nil {
-		return
-	}
-
-	i.statuses.Ready = true
-	i.emitter.Emit(EventReady)
-
-	if i.refreshInterval > 0 {
-		i.StartRefreshing() // Change to StartRefreshing (capital S)
-	}
-}
-
-func (i *FeaturevisorInstance) SetLogLevels(levels []LogLevel) {
-	i.logger.SetLevels(levels)
-}
-
-func (i *FeaturevisorInstance) OnReady() <-chan struct{} {
-	readyChan := make(chan struct{})
-
-	if i.statuses.Ready {
-		close(readyChan)
-		return readyChan
-	}
-
-	i.emitter.AddListener(EventReady, func(...interface{}) {
-		close(readyChan)
-	})
-
-	return readyChan
-}
-
-func (i *FeaturevisorInstance) SetStickyFeatures(stickyFeatures types.StickyFeatures) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.stickyFeatures = stickyFeatures
-}
-
-func (i *FeaturevisorInstance) Activate(featureKey types.FeatureKey, context types.Context) types.VariationValue {
-	i.mu.RLock()
-	defer i.mu.RUnlock()
-
-	evaluation := i.EvaluateVariation(featureKey, context)
-	variationValue := evaluation.VariationValue
-	if evaluation.Variation != nil {
-		variationValue = evaluation.Variation.Value
-	}
-
-	if variationValue == "" {
-		return ""
-	}
-
-	finalContext := context
-	if i.interceptContext != nil {
-		finalContext = i.interceptContext(context)
-	}
-
-	captureContext := types.Context{}
-	attributes := i.datafileReader.GetAllAttributes()
-	for _, attr := range attributes {
-		if attr.Capture != nil && *attr.Capture {
-			if value, ok := finalContext[attr.Key]; ok {
-				captureContext[attr.Key] = value
-			}
+func (f *FeaturevisorInstance) startRefreshing() {
+	ticker := time.NewTicker(time.Duration(f.refreshInterval) * time.Second)
+	go func() {
+		for range ticker.C {
+			f.refresh()
 		}
-	}
-
-	i.emitter.Emit(EventActivation, featureKey, variationValue, finalContext, captureContext, evaluation)
-
-	return variationValue
+	}()
 }
