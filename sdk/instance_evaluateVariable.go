@@ -92,7 +92,7 @@ func (f *FeaturevisorInstance) EvaluateVariable(featureKey interface{}, variable
 		if matchedTraffic.Variables != nil {
 			if value, exists := matchedTraffic.Variables[string(variableKey)]; exists {
 				evaluation.Reason = EvaluationReasonRule
-				evaluation.RuleKey = matchedTraffic.Key
+				evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 				evaluation.Traffic = matchedTraffic
 				evaluation.VariableValue = value
 				f.logger.Debug("override from rule", LogDetails{"evaluation": evaluation})
@@ -108,7 +108,7 @@ func (f *FeaturevisorInstance) EvaluateVariable(featureKey interface{}, variable
 						for _, v := range variation.Variables {
 							if v.Key == variableKey {
 								evaluation.Reason = EvaluationReasonAllocated
-								evaluation.RuleKey = matchedTraffic.Key
+								evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 								evaluation.Traffic = matchedTraffic
 								evaluation.VariableValue = v.Value
 								f.logger.Debug("allocated variable", LogDetails{"evaluation": evaluation})

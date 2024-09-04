@@ -178,7 +178,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 
 			if matchedRange {
 				evaluation.Reason = EvaluationReasonAllocated
-				evaluation.RuleKey = matchedTraffic.Key
+				evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 				evaluation.Traffic = matchedTraffic
 				if matchedTraffic.Enabled != nil {
 					evaluation.Enabled = matchedTraffic.Enabled
@@ -200,7 +200,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 		// Override from rule
 		if matchedTraffic.Enabled != nil {
 			evaluation.Reason = EvaluationReasonOverride
-			evaluation.RuleKey = matchedTraffic.Key
+			evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 			evaluation.Traffic = matchedTraffic
 			evaluation.Enabled = matchedTraffic.Enabled
 			f.logger.Debug("override from rule", LogDetails{"evaluation": evaluation})
@@ -210,7 +210,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 		// Treated as enabled because of matched traffic
 		if int(bucketValue) <= matchedTraffic.Percentage {
 			evaluation.Reason = EvaluationReasonRule
-			evaluation.RuleKey = matchedTraffic.Key
+			evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 			evaluation.Traffic = matchedTraffic
 			evaluation.Enabled = new(bool)
 			*evaluation.Enabled = true

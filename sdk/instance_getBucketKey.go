@@ -34,7 +34,7 @@ func (f *FeaturevisorInstance) GetBucketKey(feature types.Feature, context types
 	var bucketKey []string
 
 	for _, attributeKey := range attributeKeys {
-		attributeValue, ok := context[attributeKey]
+		attributeValue, ok := context[types.AttributeKey(attributeKey)]
 		if !ok {
 			continue
 		}
@@ -49,7 +49,7 @@ func (f *FeaturevisorInstance) GetBucketKey(feature types.Feature, context types
 		}
 	}
 
-	bucketKey = append(bucketKey, featureKey)
+	bucketKey = append(bucketKey, string(featureKey))
 
 	result := strings.Join(bucketKey, f.bucketKeySeparator)
 

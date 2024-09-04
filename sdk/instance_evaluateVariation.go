@@ -83,7 +83,7 @@ func (f *FeaturevisorInstance) EvaluateVariation(featureKey interface{}, context
 			for _, variation := range feature.Variations {
 				if variation.Value == *matchedTraffic.Variation {
 					evaluation.Reason = EvaluationReasonRule
-					evaluation.RuleKey = matchedTraffic.Key
+					evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 					evaluation.Traffic = matchedTraffic
 					evaluation.Variation = &variation
 					f.logger.Debug("override from rule", LogDetails{"evaluation": evaluation})
@@ -97,7 +97,7 @@ func (f *FeaturevisorInstance) EvaluateVariation(featureKey interface{}, context
 			for _, variation := range feature.Variations {
 				if variation.Value == *matchedAllocation.Variation {
 					evaluation.Reason = EvaluationReasonAllocated
-					evaluation.RuleKey = matchedTraffic.Key
+					evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 					evaluation.Traffic = matchedTraffic
 					evaluation.Variation = &variation
 					f.logger.Debug("allocated variation", LogDetails{"evaluation": evaluation})
