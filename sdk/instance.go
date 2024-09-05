@@ -51,6 +51,8 @@ type FeaturevisorInstance struct {
 	datafileReader *DatafileReader
 	emitter        *Emitter
 	statuses       Statuses
+	refreshTicker  *time.Ticker
+	refreshDone    chan bool
 }
 
 func CreateInstance(options InstanceOptions) (*FeaturevisorInstance, error) {
