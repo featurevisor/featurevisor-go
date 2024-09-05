@@ -9,7 +9,7 @@ func (f *FeaturevisorInstance) EvaluateVariable(featureKey interface{}, variable
 	flagEvaluation := f.EvaluateFlag(featureKey, context)
 
 	evaluation := Evaluation{
-		FeatureKey: flagEvaluation.FeatureKey,
+		FeatureKey:  flagEvaluation.FeatureKey,
 		VariableKey: &variableKey,
 	}
 
@@ -99,11 +99,10 @@ func (f *FeaturevisorInstance) EvaluateVariable(featureKey interface{}, variable
 				return evaluation
 			}
 		}
-
 		// Regular allocation
-		if matchedAllocation != nil && matchedAllocation.Variation != nil {
+		if matchedAllocation != nil {
 			for _, variation := range feature.Variations {
-				if variation.Value == *matchedAllocation.Variation {
+				if variation.Value == matchedAllocation.Variation {
 					if variation.Variables != nil {
 						for _, v := range variation.Variables {
 							if v.Key == variableKey {

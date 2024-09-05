@@ -1,7 +1,5 @@
 package sdk
 
-import "github.com/featurevisor/featurevisor-go/types"
-
 // On adds a listener for a specific event
 func (f *FeaturevisorInstance) On(eventName EventName, listener interface{}) {
 	f.emitter.AddListener(eventName, listener)

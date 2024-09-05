@@ -1,9 +1,10 @@
 package sdk
 
 import (
+	"encoding/json"
 	"errors"
-	"net/http"
 	"io/ioutil"
+	"net/http"
 
 	"github.com/featurevisor/featurevisor-go/types"
 )

@@ -91,11 +91,10 @@ func (f *FeaturevisorInstance) EvaluateVariation(featureKey interface{}, context
 				}
 			}
 		}
-
 		// Regular allocation
-		if matchedAllocation != nil && matchedAllocation.Variation != nil {
+		if matchedAllocation != nil {
 			for _, variation := range feature.Variations {
-				if variation.Value == *matchedAllocation.Variation {
+				if variation.Value == matchedAllocation.Variation {
 					evaluation.Reason = EvaluationReasonAllocated
 					evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 					evaluation.Traffic = matchedTraffic

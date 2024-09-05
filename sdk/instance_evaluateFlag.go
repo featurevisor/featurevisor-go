@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"fmt"
+
 	"github.com/featurevisor/featurevisor-go/types"
 )
 
@@ -9,41 +10,41 @@ import (
 type EvaluationReason string
 
 const (
-	EvaluationReasonNotFound      EvaluationReason = "not_found"
-	EvaluationReasonNoVariations  EvaluationReason = "no_variations"
-	EvaluationReasonNoMatch       EvaluationReason = "no_match"
-	EvaluationReasonDisabled      EvaluationReason = "disabled"
-	EvaluationReasonRequired      EvaluationReason = "required"
-	EvaluationReasonOutOfRange    EvaluationReason = "out_of_range"
-	EvaluationReasonForced        EvaluationReason = "forced"
-	EvaluationReasonInitial       EvaluationReason = "initial"
-	EvaluationReasonSticky        EvaluationReason = "sticky"
-	EvaluationReasonRule          EvaluationReason = "rule"
-	EvaluationReasonAllocated     EvaluationReason = "allocated"
-	EvaluationReasonDefaulted     EvaluationReason = "defaulted"
-	EvaluationReasonOverride      EvaluationReason = "override"
-	EvaluationReasonError         EvaluationReason = "error"
+	EvaluationReasonNotFound     EvaluationReason = "not_found"
+	EvaluationReasonNoVariations EvaluationReason = "no_variations"
+	EvaluationReasonNoMatch      EvaluationReason = "no_match"
+	EvaluationReasonDisabled     EvaluationReason = "disabled"
+	EvaluationReasonRequired     EvaluationReason = "required"
+	EvaluationReasonOutOfRange   EvaluationReason = "out_of_range"
+	EvaluationReasonForced       EvaluationReason = "forced"
+	EvaluationReasonInitial      EvaluationReason = "initial"
+	EvaluationReasonSticky       EvaluationReason = "sticky"
+	EvaluationReasonRule         EvaluationReason = "rule"
+	EvaluationReasonAllocated    EvaluationReason = "allocated"
+	EvaluationReasonDefaulted    EvaluationReason = "defaulted"
+	EvaluationReasonOverride     EvaluationReason = "override"
+	EvaluationReasonError        EvaluationReason = "error"
 )
 
 // Evaluation represents the result of a feature flag evaluation
 type Evaluation struct {
-	FeatureKey   types.FeatureKey
-	Reason       EvaluationReason
-	BucketKey    types.BucketKey
-	BucketValue  types.BucketValue
-	RuleKey      types.RuleKey
-	Error        error
-	Enabled      *bool
-	Traffic      *types.Traffic
-	ForceIndex   *int
-	Force        *types.Force
-	Required     []types.Required
-	Sticky       *types.OverrideFeature
-	Initial      *types.OverrideFeature
-	Variation    *types.Variation
+	FeatureKey     types.FeatureKey
+	Reason         EvaluationReason
+	BucketKey      types.BucketKey
+	BucketValue    types.BucketValue
+	RuleKey        types.RuleKey
+	Error          error
+	Enabled        *bool
+	Traffic        *types.Traffic
+	ForceIndex     *int
+	Force          *types.Force
+	Required       []types.Required
+	Sticky         *types.OverrideFeature
+	Initial        *types.OverrideFeature
+	Variation      *types.Variation
 	VariationValue *types.VariationValue
-	VariableKey  *types.VariableKey
-	VariableValue interface{}
+	VariableKey    *types.VariableKey
+	VariableValue  interface{}
 	VariableSchema *types.VariableSchema
 }
 
@@ -140,7 +141,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 
 			if requiredVariation != nil {
 				requiredVariationValue := f.GetVariation(requiredKey, finalContext)
-				if requiredVariationValue != *requiredVariation {
+				if requiredVariationValue == nil || (requiredVariationValue != nil && string(*requiredVariationValue) != *requiredVariation) {
 					requiredFeaturesAreEnabled = false
 					break
 				}
@@ -170,7 +171,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 		if len(feature.Ranges) > 0 {
 			matchedRange := false
 			for _, r := range feature.Ranges {
-				if int(bucketValue) >= r[0] && int(bucketValue) < r[1] {
+				if int(bucketValue) >= int(r[0]) && int(bucketValue) < int(r[1]) {
 					matchedRange = true
 					break
 				}
@@ -208,7 +209,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context type
 		}
 
 		// Treated as enabled because of matched traffic
-		if int(bucketValue) <= matchedTraffic.Percentage {
+		if int(bucketValue) <= int(matchedTraffic.Percentage) {
 			evaluation.Reason = EvaluationReasonRule
 			evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
 			evaluation.Traffic = matchedTraffic

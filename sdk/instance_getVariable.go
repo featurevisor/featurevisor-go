@@ -1,6 +1,8 @@
 package sdk
 
 import (
+	"encoding/json"
+
 	"github.com/featurevisor/featurevisor-go/types"
 )
 
