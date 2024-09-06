@@ -1,7 +1,9 @@
 package sdk
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/featurevisor/featurevisor-go/types"
@@ -22,7 +24,7 @@ type InstanceOptions struct {
 	BucketKeySeparator   string
 	ConfigureBucketKey   ConfigureBucketKey
 	ConfigureBucketValue ConfigureBucketValue
-	Datafile             interface{}
+	Datafile             *types.DatafileContent
 	DatafileURL          string
 	HandleDatafileFetch  func(datafileURL string) (types.DatafileContent, error)
 	InitialFeatures      types.InitialFeatures
@@ -53,6 +55,15 @@ type FeaturevisorInstance struct {
 	statuses       Statuses
 	refreshTicker  *time.Ticker
 	refreshDone    chan bool
+}
+
+func NewDatafileContent(jsonString string) (*types.DatafileContent, error) {
+	var datafileContent types.DatafileContent
+	err := json.Unmarshal([]byte(jsonString), &datafileContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal datafile content: %v", err)
+	}
+	return &datafileContent, nil
 }
 
 func CreateInstance(options InstanceOptions) (*FeaturevisorInstance, error) {
