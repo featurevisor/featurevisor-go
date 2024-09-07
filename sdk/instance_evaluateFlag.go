@@ -49,22 +49,18 @@ type Evaluation struct {
 }
 
 // EvaluateFlag evaluates a feature flag for the given context
-func (f *FeaturevisorInstance) EvaluateFlag(featureKey interface{}, context types.Context) Evaluation {
+func (f *FeaturevisorInstance) EvaluateFlag(featureKey string, context types.Context) Evaluation {
 	var evaluation Evaluation
-	var feature *types.Feature
+	feature := f.GetFeature(featureKey)
+	evaluation.FeatureKey = types.FeatureKey(featureKey)
 
-	switch key := featureKey.(type) {
-	case string:
-		feature = f.GetFeature(key)
-		evaluation.FeatureKey = types.FeatureKey(key)
-	case types.Feature:
-		feature = &key
-		evaluation.FeatureKey = key.Key
-	default:
-		evaluation.Reason = EvaluationReasonError
-		evaluation.Error = fmt.Errorf("invalid feature key type")
+	if feature == nil {
+		evaluation.Reason = EvaluationReasonNotFound
+		evaluation.Error = fmt.Errorf("feature not found: %s", featureKey)
 		return evaluation
 	}
+
+	evaluation.FeatureKey = feature.Key
 
 	if feature == nil {
 		evaluation.Reason = EvaluationReasonNotFound

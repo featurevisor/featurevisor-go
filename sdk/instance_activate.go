@@ -5,7 +5,7 @@ import (
 )
 
 // Activate activates a feature for the given context and returns the variation value
-func (f *FeaturevisorInstance) Activate(featureKey interface{}, context types.Context) *types.VariationValue {
+func (f *FeaturevisorInstance) Activate(featureKey string, context types.Context) *types.VariationValue {
 	evaluation := f.EvaluateVariation(featureKey, context)
 	variationValue := f.GetVariation(featureKey, context)
 

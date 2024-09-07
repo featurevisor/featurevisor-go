@@ -708,7 +708,7 @@ func Evaluate(args []string) {
 	}
 
 	// Evaluate the feature
-	evaluation := instance.EvaluateFlag(types.FeatureKey(featureKey), context)
+	evaluation := instance.EvaluateFlag(featureKey, context)
 
 	// Print the evaluation details
 	fmt.Printf("Feature: %s\n", featureKey)

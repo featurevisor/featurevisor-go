@@ -5,7 +5,7 @@ import (
 )
 
 // EvaluateVariable evaluates a variable for a given feature, variable key, and context
-func (f *FeaturevisorInstance) EvaluateVariable(featureKey interface{}, variableKey types.VariableKey, context types.Context) Evaluation {
+func (f *FeaturevisorInstance) EvaluateVariable(featureKey string, variableKey types.VariableKey, context types.Context) Evaluation {
 	flagEvaluation := f.EvaluateFlag(featureKey, context)
 
 	evaluation := Evaluation{

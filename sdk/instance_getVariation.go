@@ -5,7 +5,7 @@ import (
 )
 
 // GetVariation returns the variation value for a given feature and context
-func (f *FeaturevisorInstance) GetVariation(featureKey interface{}, context types.Context) *types.VariationValue {
+func (f *FeaturevisorInstance) GetVariation(featureKey string, context types.Context) *types.VariationValue {
 	evaluation := f.EvaluateVariation(featureKey, context)
 
 	if evaluation.VariationValue != nil {
