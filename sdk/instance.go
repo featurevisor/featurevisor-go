@@ -107,10 +107,11 @@ func CreateInstance(options InstanceOptions) (*FeaturevisorInstance, error) {
 			}
 		})
 	}
-
 	if options.DatafileURL != "" {
-		if err := instance.setDatafile(options.Datafile); err != nil {
-			return nil, err
+		if options.Datafile != nil {
+			if err := instance.setDatafile(*options.Datafile); err != nil {
+				return nil, err
+			}
 		}
 
 		go func() {
@@ -133,11 +134,11 @@ func CreateInstance(options InstanceOptions) (*FeaturevisorInstance, error) {
 			}
 		}()
 	} else if options.Datafile != nil {
-		if err := instance.setDatafile(options.Datafile); err != nil {
+		if err := instance.setDatafile(*options.Datafile); err != nil {
 			return nil, err
 		}
 		instance.statuses.Ready = true
-		go instance.emitter.Emit(EventReady)
+		instance.emitter.Emit(EventReady)
 	} else {
 		return nil, errors.New("Featurevisor SDK instance cannot be created without both `datafile` and `datafileUrl` options")
 	}
