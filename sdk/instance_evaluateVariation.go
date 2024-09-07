@@ -5,7 +5,7 @@ import (
 )
 
 // EvaluateVariation evaluates the variation for a given feature and context
-func (f *FeaturevisorInstance) EvaluateVariation(featureKey string, context types.Context) Evaluation {
+func (f *FeaturevisorInstance) EvaluateVariation(featureKey types.FeatureKey, context types.Context) Evaluation {
 	evaluation := f.EvaluateFlag(featureKey, context)
 
 	if evaluation.Enabled == nil || !*evaluation.Enabled {

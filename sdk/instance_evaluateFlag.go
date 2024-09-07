@@ -1,6 +1,7 @@
 package sdk
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/featurevisor/featurevisor-go/types"
@@ -49,14 +50,26 @@ type Evaluation struct {
 }
 
 // EvaluateFlag evaluates a feature flag for the given context
-func (f *FeaturevisorInstance) EvaluateFlag(featureKey string, context types.Context) Evaluation {
+func (f *FeaturevisorInstance) EvaluateFlag(key types.FeatureKey, context types.Context) Evaluation {
+	// Add nil checks at the beginning of the function
+	if f == nil {
+		return Evaluation{
+			FeatureKey: key,
+			Enabled:    new(bool),
+			Reason:     EvaluationReasonError,
+			Error:      errors.New("invalid instance or datafile"),
+		}
+	}
+
 	var evaluation Evaluation
-	feature := f.GetFeature(featureKey)
-	evaluation.FeatureKey = types.FeatureKey(featureKey)
+	feature := f.GetFeature(key)
+	evaluation.FeatureKey = key
 
 	if feature == nil {
 		evaluation.Reason = EvaluationReasonNotFound
-		evaluation.Error = fmt.Errorf("feature not found: %s", featureKey)
+		evaluation.Error = fmt.Errorf("feature not found: %s", key)
+		evaluation.Enabled = new(bool)
+		*evaluation.Enabled = false
 		return evaluation
 	}
 
@@ -129,14 +142,14 @@ func (f *FeaturevisorInstance) EvaluateFlag(featureKey string, context types.Con
 				}
 			}
 
-			requiredIsEnabled := f.IsEnabled(requiredKey, finalContext)
+			requiredIsEnabled := f.IsEnabled(types.FeatureKey(requiredKey), finalContext)
 			if !requiredIsEnabled {
 				requiredFeaturesAreEnabled = false
 				break
 			}
 
 			if requiredVariation != nil {
-				requiredVariationValue := f.GetVariation(requiredKey, finalContext)
+				requiredVariationValue := f.GetVariation(types.FeatureKey(requiredKey), finalContext)
 				if requiredVariationValue == nil || (requiredVariationValue != nil && string(*requiredVariationValue) != *requiredVariation) {
 					requiredFeaturesAreEnabled = false
 					break

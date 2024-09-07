@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/featurevisor/featurevisor-go/sdk"
 	"github.com/featurevisor/featurevisor-go/types"
@@ -708,10 +709,14 @@ func Evaluate(args []string) {
 	}
 
 	// Evaluate the feature
-	evaluation := instance.EvaluateFlag(featureKey, context)
+	evaluation := instance.EvaluateFlag(types.FeatureKey(featureKey), context)
+	if evaluation.Error != nil {
+		fmt.Printf("Error evaluating flag: %v\n", evaluation.Error)
+		os.Exit(1)
+	}
 
 	// Print the evaluation details
 	fmt.Printf("Feature: %s\n", featureKey)
-	fmt.Printf("Enabled: %v\n", evaluation.Enabled)
+	fmt.Printf("Enabled: %v\n", *evaluation.Enabled)
 	fmt.Printf("Reason: %s\n", evaluation.Reason)
 }
