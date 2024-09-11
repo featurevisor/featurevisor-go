@@ -718,9 +718,12 @@ func Evaluate(args []string) {
 	fmt.Printf("\n\nIs ready: %v\n", isReady)
 	fmt.Printf("\n\n")
 
-	// is enabled
-	isEnabled := instance.IsEnabled(featureKey, context)
-	fmt.Printf("\n\nIs enabled: %v\n", isEnabled)
+	// print the feature key
+	fmt.Printf("Feature key: %s\n", featureKey)
+	fmt.Printf("\n\n")
+
+	// print the context
+	fmt.Printf("Context: %v\n", context)
 	fmt.Printf("\n\n")
 
 	// Evaluate the feature
@@ -730,8 +733,17 @@ func Evaluate(args []string) {
 		os.Exit(1)
 	}
 
-	// Print the evaluation details
-	fmt.Printf("Feature: %s\n", featureKey)
-	fmt.Printf("Enabled: %v\n", *evaluation.Enabled)
-	fmt.Printf("Reason: %s\n", evaluation.Reason)
+	// print the evaluation
+	fmt.Printf("Evaluation:\n")
+	fmt.Printf("  Enabled: %v\n", *evaluation.Enabled)
+	fmt.Printf("  Reason: %v\n", evaluation.Reason)
+	fmt.Printf("  RuleKey: %v\n", evaluation.RuleKey)
+	fmt.Printf("  Variation: %v\n", evaluation.Variation)
+	fmt.Printf("  BucketKey: %v\n", evaluation.BucketKey)
+	fmt.Printf("  BucketValue: %v\n", evaluation.BucketValue)
+
+	if evaluation.Error != nil {
+		fmt.Printf("  Error: %v\n", evaluation.Error)
+	}
+	fmt.Printf("\n\n")
 }
