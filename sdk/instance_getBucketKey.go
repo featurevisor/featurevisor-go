@@ -7,7 +7,7 @@ import (
 )
 
 // GetBucketKey generates a bucket key for the given feature and context
-func (f *FeaturevisorInstance) GetBucketKey(feature types.Feature, context types.Context) types.BucketKey {
+func (f *FeaturevisorInstance) GetBucketKey(feature types.Feature, context types.Context) string {
 	featureKey := feature.Key
 	var attributeKeys []string
 	var bucketType string
@@ -34,7 +34,7 @@ func (f *FeaturevisorInstance) GetBucketKey(feature types.Feature, context types
 	var bucketKey []string
 
 	for _, attributeKey := range attributeKeys {
-		attributeValue, ok := context[types.AttributeKey(attributeKey)]
+		attributeValue, ok := context[attributeKey]
 		if !ok {
 			continue
 		}
@@ -54,8 +54,8 @@ func (f *FeaturevisorInstance) GetBucketKey(feature types.Feature, context types
 	result := strings.Join(bucketKey, f.bucketKeySeparator)
 
 	if f.configureBucketKey != nil {
-		return f.configureBucketKey(feature, context, types.BucketKey(result))
+		return f.configureBucketKey(feature, context, result)
 	}
 
-	return types.BucketKey(result)
+	return result
 }

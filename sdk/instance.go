@@ -11,8 +11,8 @@ import (
 
 type ReadyCallback func()
 type ActivationCallback func(featureName string, variation types.VariationValue, context types.Context, captureContext types.Context)
-type ConfigureBucketKey func(feature types.Feature, context types.Context, bucketKey types.BucketKey) types.BucketKey
-type ConfigureBucketValue func(feature types.Feature, context types.Context, bucketValue types.BucketValue) types.BucketValue
+type ConfigureBucketKey func(feature types.Feature, context types.Context, bucketKey string) string
+type ConfigureBucketValue func(feature types.Feature, context types.Context, bucketValue int) int
 type InterceptContext func(context types.Context) types.Context
 
 type Statuses struct {

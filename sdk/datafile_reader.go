@@ -46,7 +46,7 @@ func (dr *DatafileReader) GetAllAttributes() []types.Attribute {
 	return dr.attributes
 }
 
-func (dr *DatafileReader) GetAttribute(attributeKey types.AttributeKey) *types.Attribute {
+func (dr *DatafileReader) GetAttribute(attributeKey string) *types.Attribute {
 	for _, a := range dr.attributes {
 		if a.Key == attributeKey {
 			return &a
@@ -55,7 +55,7 @@ func (dr *DatafileReader) GetAttribute(attributeKey types.AttributeKey) *types.A
 	return nil
 }
 
-func (dr *DatafileReader) GetSegment(segmentKey types.SegmentKey) *types.Segment {
+func (dr *DatafileReader) GetSegment(segmentKey string) *types.Segment {
 	for _, s := range dr.segments {
 		if s.Key == segmentKey {
 			segment := s
@@ -70,7 +70,7 @@ func (dr *DatafileReader) GetSegment(segmentKey types.SegmentKey) *types.Segment
 	return nil
 }
 
-func (dr *DatafileReader) GetFeature(featureKey types.FeatureKey) *types.Feature {
+func (dr *DatafileReader) GetFeature(featureKey string) *types.Feature {
 	for _, f := range dr.features {
 		if f.Key == featureKey {
 			return &f

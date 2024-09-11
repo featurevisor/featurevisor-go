@@ -5,7 +5,7 @@ import (
 )
 
 // EvaluateVariable evaluates a variable for a given feature, variable key, and context
-func (f *FeaturevisorInstance) EvaluateVariable(featureKey types.FeatureKey, variableKey types.VariableKey, context types.Context) Evaluation {
+func (f *FeaturevisorInstance) EvaluateVariable(featureKey string, variableKey string, context types.Context) Evaluation {
 	flagEvaluation := f.EvaluateFlag(featureKey, context)
 
 	evaluation := Evaluation{
@@ -92,7 +92,7 @@ func (f *FeaturevisorInstance) EvaluateVariable(featureKey types.FeatureKey, var
 		if matchedTraffic.Variables != nil {
 			if value, exists := matchedTraffic.Variables[string(variableKey)]; exists {
 				evaluation.Reason = EvaluationReasonRule
-				evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
+				evaluation.RuleKey = matchedTraffic.Key
 				evaluation.Traffic = matchedTraffic
 				evaluation.VariableValue = value
 				f.logger.Debug("override from rule", LogDetails{"evaluation": evaluation})
@@ -107,7 +107,7 @@ func (f *FeaturevisorInstance) EvaluateVariable(featureKey types.FeatureKey, var
 						for _, v := range variation.Variables {
 							if v.Key == variableKey {
 								evaluation.Reason = EvaluationReasonAllocated
-								evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
+								evaluation.RuleKey = matchedTraffic.Key
 								evaluation.Traffic = matchedTraffic
 								evaluation.VariableValue = v.Value
 								f.logger.Debug("allocated variable", LogDetails{"evaluation": evaluation})
@@ -128,7 +128,7 @@ func (f *FeaturevisorInstance) EvaluateVariable(featureKey types.FeatureKey, var
 	return evaluation
 }
 
-func (f *FeaturevisorInstance) findVariableSchema(feature *types.Feature, variableKey types.VariableKey) *types.VariableSchema {
+func (f *FeaturevisorInstance) findVariableSchema(feature *types.Feature, variableKey string) *types.VariableSchema {
 	for _, schema := range feature.VariablesSchema {
 		if schema.Key == variableKey {
 			return &schema

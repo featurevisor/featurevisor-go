@@ -5,7 +5,7 @@ import (
 )
 
 // EvaluateVariation evaluates the variation for a given feature and context
-func (f *FeaturevisorInstance) EvaluateVariation(featureKey types.FeatureKey, context types.Context) Evaluation {
+func (f *FeaturevisorInstance) EvaluateVariation(featureKey string, context types.Context) Evaluation {
 	evaluation := f.EvaluateFlag(featureKey, context)
 
 	if evaluation.Enabled == nil || !*evaluation.Enabled {
@@ -83,7 +83,7 @@ func (f *FeaturevisorInstance) EvaluateVariation(featureKey types.FeatureKey, co
 			for _, variation := range feature.Variations {
 				if variation.Value == *matchedTraffic.Variation {
 					evaluation.Reason = EvaluationReasonRule
-					evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
+					evaluation.RuleKey = matchedTraffic.Key
 					evaluation.Traffic = matchedTraffic
 					evaluation.Variation = &variation
 					f.logger.Debug("override from rule", LogDetails{"evaluation": evaluation})
@@ -96,7 +96,7 @@ func (f *FeaturevisorInstance) EvaluateVariation(featureKey types.FeatureKey, co
 			for _, variation := range feature.Variations {
 				if variation.Value == matchedAllocation.Variation {
 					evaluation.Reason = EvaluationReasonAllocated
-					evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
+					evaluation.RuleKey = matchedTraffic.Key
 					evaluation.Traffic = matchedTraffic
 					evaluation.Variation = &variation
 					f.logger.Debug("allocated variation", LogDetails{"evaluation": evaluation})

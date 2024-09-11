@@ -14,7 +14,7 @@ func allGroupSegmentsAreMatched(groupSegments interface{}, context types.Context
 		if gs == "*" {
 			return true
 		}
-		segment := datafileReader.GetSegment(types.SegmentKey(gs))
+		segment := datafileReader.GetSegment(gs)
 		if segment != nil {
 			return segmentIsMatched(*segment, context, logger)
 		}

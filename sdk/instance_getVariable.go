@@ -7,7 +7,7 @@ import (
 )
 
 // GetVariable returns the variable value for a given feature, variable key, and context
-func (f *FeaturevisorInstance) GetVariable(featureKey types.FeatureKey, variableKey types.VariableKey, context types.Context) interface{} {
+func (f *FeaturevisorInstance) GetVariable(featureKey string, variableKey string, context types.Context) interface{} {
 	evaluation := f.EvaluateVariable(featureKey, variableKey, context)
 
 	if evaluation.VariableValue != nil {
@@ -27,7 +27,7 @@ func (f *FeaturevisorInstance) GetVariable(featureKey types.FeatureKey, variable
 }
 
 // GetVariableBoolean returns the boolean variable value for a given feature, variable key, and context
-func (f *FeaturevisorInstance) GetVariableBoolean(featureKey types.FeatureKey, variableKey types.VariableKey, context types.Context) *bool {
+func (f *FeaturevisorInstance) GetVariableBoolean(featureKey string, variableKey string, context types.Context) *bool {
 	value := f.GetVariable(featureKey, variableKey, context)
 	if boolValue, ok := value.(bool); ok {
 		return &boolValue
@@ -36,7 +36,7 @@ func (f *FeaturevisorInstance) GetVariableBoolean(featureKey types.FeatureKey, v
 }
 
 // GetVariableString returns the string variable value for a given feature, variable key, and context
-func (f *FeaturevisorInstance) GetVariableString(featureKey types.FeatureKey, variableKey types.VariableKey, context types.Context) *string {
+func (f *FeaturevisorInstance) GetVariableString(featureKey string, variableKey string, context types.Context) *string {
 	value := f.GetVariable(featureKey, variableKey, context)
 	if strValue, ok := value.(string); ok {
 		return &strValue
@@ -45,7 +45,7 @@ func (f *FeaturevisorInstance) GetVariableString(featureKey types.FeatureKey, va
 }
 
 // GetVariableInteger returns the integer variable value for a given feature, variable key, and context
-func (f *FeaturevisorInstance) GetVariableInteger(featureKey types.FeatureKey, variableKey types.VariableKey, context types.Context) *int {
+func (f *FeaturevisorInstance) GetVariableInteger(featureKey string, variableKey string, context types.Context) *int {
 	value := f.GetVariable(featureKey, variableKey, context)
 	if intValue, ok := value.(int); ok {
 		return &intValue
@@ -58,7 +58,7 @@ func (f *FeaturevisorInstance) GetVariableInteger(featureKey types.FeatureKey, v
 }
 
 // GetVariableDouble returns the double variable value for a given feature, variable key, and context
-func (f *FeaturevisorInstance) GetVariableDouble(featureKey types.FeatureKey, variableKey types.VariableKey, context types.Context) *float64 {
+func (f *FeaturevisorInstance) GetVariableDouble(featureKey string, variableKey string, context types.Context) *float64 {
 	value := f.GetVariable(featureKey, variableKey, context)
 	if floatValue, ok := value.(float64); ok {
 		return &floatValue
@@ -67,7 +67,7 @@ func (f *FeaturevisorInstance) GetVariableDouble(featureKey types.FeatureKey, va
 }
 
 // GetVariableArray returns the array variable value for a given feature, variable key, and context
-func (f *FeaturevisorInstance) GetVariableArray(featureKey types.FeatureKey, variableKey types.VariableKey, context types.Context) []string {
+func (f *FeaturevisorInstance) GetVariableArray(featureKey string, variableKey string, context types.Context) []string {
 	value := f.GetVariable(featureKey, variableKey, context)
 	if arrayValue, ok := value.([]interface{}); ok {
 		result := make([]string, len(arrayValue))
@@ -82,7 +82,7 @@ func (f *FeaturevisorInstance) GetVariableArray(featureKey types.FeatureKey, var
 }
 
 // GetVariableObject returns the object variable value for a given feature, variable key, and context
-func (f *FeaturevisorInstance) GetVariableObject(featureKey types.FeatureKey, variableKey types.VariableKey, context types.Context) map[string]interface{} {
+func (f *FeaturevisorInstance) GetVariableObject(featureKey string, variableKey string, context types.Context) map[string]interface{} {
 	value := f.GetVariable(featureKey, variableKey, context)
 	if objValue, ok := value.(map[string]interface{}); ok {
 		return objValue
@@ -91,6 +91,6 @@ func (f *FeaturevisorInstance) GetVariableObject(featureKey types.FeatureKey, va
 }
 
 // GetVariableJSON returns the JSON variable value for a given feature, variable key, and context
-func (f *FeaturevisorInstance) GetVariableJSON(featureKey types.FeatureKey, variableKey types.VariableKey, context types.Context) interface{} {
+func (f *FeaturevisorInstance) GetVariableJSON(featureKey string, variableKey string, context types.Context) interface{} {
 	return f.GetVariable(featureKey, variableKey, context)
 }

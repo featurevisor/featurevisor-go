@@ -5,13 +5,13 @@ import (
 )
 
 // GetBucketValue generates a bucket value for the given feature and context
-func (f *FeaturevisorInstance) GetBucketValue(feature types.Feature, context types.Context) types.BucketValue {
+func (f *FeaturevisorInstance) GetBucketValue(feature types.Feature, context types.Context) int {
 	bucketKey := f.GetBucketKey(feature, context)
 	value := getBucketedNumber(string(bucketKey))
 
 	if f.configureBucketValue != nil {
-		return f.configureBucketValue(feature, context, types.BucketValue(value))
+		return f.configureBucketValue(feature, context, value)
 	}
 
-	return types.BucketValue(value)
+	return value
 }

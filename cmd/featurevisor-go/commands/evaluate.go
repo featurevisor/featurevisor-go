@@ -709,7 +709,7 @@ func Evaluate(args []string) {
 	}
 
 	// Evaluate the feature
-	evaluation := instance.EvaluateFlag(types.FeatureKey(featureKey), context)
+	evaluation := instance.EvaluateFlag(featureKey, context)
 	if evaluation.Error != nil {
 		fmt.Printf("Error evaluating flag: %v\n", evaluation.Error)
 		os.Exit(1)

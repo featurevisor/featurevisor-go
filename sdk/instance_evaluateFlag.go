@@ -29,11 +29,11 @@ const (
 
 // Evaluation represents the result of a feature flag evaluation
 type Evaluation struct {
-	FeatureKey     types.FeatureKey
+	FeatureKey     string
 	Reason         EvaluationReason
-	BucketKey      types.BucketKey
-	BucketValue    types.BucketValue
-	RuleKey        types.RuleKey
+	BucketKey      string
+	BucketValue    int
+	RuleKey        string
 	Error          error
 	Enabled        *bool
 	Traffic        *types.Traffic
@@ -44,13 +44,13 @@ type Evaluation struct {
 	Initial        *types.OverrideFeature
 	Variation      *types.Variation
 	VariationValue *types.VariationValue
-	VariableKey    *types.VariableKey
+	VariableKey    *string
 	VariableValue  interface{}
 	VariableSchema *types.VariableSchema
 }
 
 // EvaluateFlag evaluates a feature flag for the given context
-func (f *FeaturevisorInstance) EvaluateFlag(key types.FeatureKey, context types.Context) Evaluation {
+func (f *FeaturevisorInstance) EvaluateFlag(key string, context types.Context) Evaluation {
 	// Add nil checks at the beginning of the function
 	if f == nil {
 		return Evaluation{
@@ -142,14 +142,14 @@ func (f *FeaturevisorInstance) EvaluateFlag(key types.FeatureKey, context types.
 				}
 			}
 
-			requiredIsEnabled := f.IsEnabled(types.FeatureKey(requiredKey), finalContext)
+			requiredIsEnabled := f.IsEnabled(requiredKey, finalContext)
 			if !requiredIsEnabled {
 				requiredFeaturesAreEnabled = false
 				break
 			}
 
 			if requiredVariation != nil {
-				requiredVariationValue := f.GetVariation(types.FeatureKey(requiredKey), finalContext)
+				requiredVariationValue := f.GetVariation(requiredKey, finalContext)
 				if requiredVariationValue == nil || (requiredVariationValue != nil && string(*requiredVariationValue) != *requiredVariation) {
 					requiredFeaturesAreEnabled = false
 					break
@@ -188,7 +188,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(key types.FeatureKey, context types.
 
 			if matchedRange {
 				evaluation.Reason = EvaluationReasonAllocated
-				evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
+				evaluation.RuleKey = matchedTraffic.Key
 				evaluation.Traffic = matchedTraffic
 				if matchedTraffic.Enabled != nil {
 					evaluation.Enabled = matchedTraffic.Enabled
@@ -210,7 +210,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(key types.FeatureKey, context types.
 		// Override from rule
 		if matchedTraffic.Enabled != nil {
 			evaluation.Reason = EvaluationReasonOverride
-			evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
+			evaluation.RuleKey = matchedTraffic.Key
 			evaluation.Traffic = matchedTraffic
 			evaluation.Enabled = matchedTraffic.Enabled
 			f.logger.Debug("override from rule", LogDetails{"evaluation": evaluation})
@@ -220,7 +220,7 @@ func (f *FeaturevisorInstance) EvaluateFlag(key types.FeatureKey, context types.
 		// Treated as enabled because of matched traffic
 		if int(bucketValue) <= int(matchedTraffic.Percentage) {
 			evaluation.Reason = EvaluationReasonRule
-			evaluation.RuleKey = types.RuleKey(matchedTraffic.Key)
+			evaluation.RuleKey = matchedTraffic.Key
 			evaluation.Traffic = matchedTraffic
 			evaluation.Enabled = new(bool)
 			*evaluation.Enabled = true

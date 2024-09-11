@@ -5,13 +5,7 @@ import (
 	"time"
 )
 
-type BucketKey string
-type BucketValue int // 0 to 100,000 (100% * 1000 to include three decimal places in same integer)
-
-type AttributeKey string
-type AttributeValue interface{}
-
-type Context map[AttributeKey]AttributeValue
+type Context map[string]interface{}
 
 type AttributeType string
 
@@ -25,7 +19,7 @@ const (
 )
 
 type Attribute struct {
-	Key     AttributeKey  `json:"key"`
+	Key     string        `json:"key"`
 	Type    AttributeType `json:"type"`
 	Capture *bool         `json:"capture,omitempty"`
 }
@@ -58,7 +52,7 @@ const (
 type ConditionValue interface{}
 
 type PlainCondition struct {
-	Attribute AttributeKey   `json:"attribute"`
+	Attribute string         `json:"attribute"`
 	Operator  Operator       `json:"operator"`
 	Value     ConditionValue `json:"value"`
 }
@@ -108,10 +102,6 @@ type DatafileContent struct {
 
 type Weight float64
 
-type EnvironmentKey string
-
-type RuleKey string
-
 type Rule struct {
 	Key        string                   `json:"key"`
 	Segments   json.RawMessage          `json:"segments"`
@@ -135,20 +125,18 @@ type ExistingFeature struct {
 		Weight Weight         `json:"weight"`
 	} `json:"variations,omitempty"`
 	Traffic []struct {
-		Key        RuleKey      `json:"key"`
+		Key        string       `json:"key"`
 		Percentage Percentage   `json:"percentage"`
 		Allocation []Allocation `json:"allocation"`
 	} `json:"traffic"`
 	Ranges []Range `json:"ranges,omitempty"`
 }
 
-type ExistingFeatures map[FeatureKey]ExistingFeature
+type ExistingFeatures map[string]ExistingFeature
 
 type ExistingState struct {
 	Features ExistingFeatures `json:"features"`
 }
-
-type FeatureKey string
 
 type Force struct {
 	Conditions json.RawMessage          `json:"conditions,omitempty"`
@@ -180,14 +168,14 @@ type Traffic struct {
 type BucketBy interface{}
 
 type RequiredWithVariation struct {
-	Key       FeatureKey     `json:"key"`
+	Key       string         `json:"key"`
 	Variation VariationValue `json:"variation"`
 }
 
 type Required interface{}
 
 type Feature struct {
-	Key             FeatureKey       `json:"key"`
+	Key             string           `json:"key"`
 	Deprecated      *bool            `json:"deprecated,omitempty"`
 	Required        []Required       `json:"required,omitempty"`
 	VariablesSchema []VariableSchema `json:"variablesSchema,omitempty"`
@@ -239,13 +227,13 @@ type SearchIndex struct {
 		Attributes []struct {
 			Attribute
 			LastModified   *LastModified `json:"lastModified,omitempty"`
-			UsedInSegments []SegmentKey  `json:"usedInSegments"`
-			UsedInFeatures []FeatureKey  `json:"usedInFeatures"`
+			UsedInSegments []string      `json:"usedInSegments"`
+			UsedInFeatures []string      `json:"usedInFeatures"`
 		} `json:"attributes"`
 		Segments []struct {
 			Segment
 			LastModified   *LastModified `json:"lastModified,omitempty"`
-			UsedInFeatures []FeatureKey  `json:"usedInFeatures"`
+			UsedInFeatures []string      `json:"usedInFeatures"`
 		} `json:"segments"`
 		Features []struct {
 			ParsedFeature
@@ -271,31 +259,28 @@ type Commit struct {
 }
 
 type OverrideFeature struct {
-	Enabled   *bool                         `json:"enabled"`
-	Variation *VariationValue               `json:"variation,omitempty"`
-	Variables map[VariableKey]VariableValue `json:"variables,omitempty"`
+	Enabled   *bool                    `json:"enabled"`
+	Variation *VariationValue          `json:"variation,omitempty"`
+	Variables map[string]VariableValue `json:"variables,omitempty"`
 }
 
-type StickyFeatures map[FeatureKey]OverrideFeature
-
+type StickyFeatures map[string]OverrideFeature
 type InitialFeatures StickyFeatures
 
 type ParsedFeature struct {
-	Key             FeatureKey                     `json:"key"`
-	Deprecated      *bool                          `json:"deprecated,omitempty"`
-	Description     string                         `json:"description"`
-	Tags            []Tag                          `json:"tags"`
-	Required        []Required                     `json:"required,omitempty"`
-	BucketBy        BucketBy                       `json:"bucketBy"`
-	VariablesSchema []VariableSchema               `json:"variablesSchema,omitempty"`
-	Variations      []Variation                    `json:"variations,omitempty"`
-	Environments    map[EnvironmentKey]Environment `json:"environments"`
+	Key             string                 `json:"key"`
+	Deprecated      *bool                  `json:"deprecated,omitempty"`
+	Description     string                 `json:"description"`
+	Tags            []Tag                  `json:"tags"`
+	Required        []Required             `json:"required,omitempty"`
+	BucketBy        BucketBy               `json:"bucketBy"`
+	VariablesSchema []VariableSchema       `json:"variablesSchema,omitempty"`
+	Variations      []Variation            `json:"variations,omitempty"`
+	Environments    map[string]Environment `json:"environments"`
 }
 
-type SegmentKey string
-
 type Segment struct {
-	Key        SegmentKey      `json:"key"`
+	Key        string          `json:"key"`
 	Conditions json.RawMessage `json:"conditions"`
 }
 
@@ -313,21 +298,21 @@ type NotGroupSegment struct {
 	Not []GroupSegment `json:"not"`
 }
 
-type AssertionMatrix map[string][]AttributeValue
+type AssertionMatrix map[string][]interface{}
 
 type FeatureAssertion struct {
-	Matrix              AssertionMatrix               `json:"matrix,omitempty"`
-	Description         string                        `json:"description,omitempty"`
-	Environment         EnvironmentKey                `json:"environment"`
-	At                  Weight                        `json:"at"`
-	Context             Context                       `json:"context"`
-	ExpectedToBeEnabled bool                          `json:"expectedToBeEnabled"`
-	ExpectedVariation   *VariationValue               `json:"expectedVariation,omitempty"`
-	ExpectedVariables   map[VariableKey]VariableValue `json:"expectedVariables,omitempty"`
+	Matrix              AssertionMatrix          `json:"matrix,omitempty"`
+	Description         string                   `json:"description,omitempty"`
+	Environment         string                   `json:"environment"`
+	At                  Weight                   `json:"at"`
+	Context             Context                  `json:"context"`
+	ExpectedToBeEnabled bool                     `json:"expectedToBeEnabled"`
+	ExpectedVariation   *VariationValue          `json:"expectedVariation,omitempty"`
+	ExpectedVariables   map[string]VariableValue `json:"expectedVariables,omitempty"`
 }
 
 type TestFeature struct {
-	Feature    FeatureKey         `json:"feature"`
+	Feature    string             `json:"feature"`
 	Assertions []FeatureAssertion `json:"assertions"`
 }
 
@@ -339,7 +324,7 @@ type SegmentAssertion struct {
 }
 
 type TestSegment struct {
-	Segment    SegmentKey         `json:"segment"`
+	Segment    string             `json:"segment"`
 	Assertions []SegmentAssertion `json:"assertions"`
 }
 
@@ -371,7 +356,6 @@ type TestResult struct {
 
 type VariationValue string
 
-type VariableKey string
 type VariableType string
 
 const (
@@ -401,7 +385,7 @@ type VariableOverride struct {
 }
 
 type Variable struct {
-	Key       VariableKey        `json:"key"`
+	Key       string             `json:"key"`
 	Value     VariableValue      `json:"value"`
 	Overrides []VariableOverride `json:"overrides,omitempty"`
 }
@@ -412,7 +396,7 @@ type Variation struct {
 }
 
 type VariableSchema struct {
-	Key          VariableKey   `json:"key"`
+	Key          string        `json:"key"`
 	Type         VariableType  `json:"type"`
 	DefaultValue VariableValue `json:"defaultValue"`
 }

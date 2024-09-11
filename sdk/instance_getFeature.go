@@ -12,7 +12,7 @@ func (f *FeaturevisorInstance) GetFeature(featureKey interface{}) *types.Feature
 
 	switch key := featureKey.(type) {
 	case string:
-		return f.datafileReader.GetFeature(types.FeatureKey(key))
+		return f.datafileReader.GetFeature(key)
 	case types.Feature:
 		return &key
 	default:
