@@ -682,8 +682,13 @@ func Evaluate(args []string) {
 		fmt.Printf("Error creating datafile content: %v\n", datafileErr)
 		return
 	}
+	logger := sdk.CreateLogger(sdk.CreateLoggerOptions{
+		Levels: []sdk.LogLevel{sdk.Debug, sdk.Info, sdk.Warn, sdk.Error},
+	})
+
 	instance, err := sdk.CreateInstance(sdk.InstanceOptions{
 		Datafile: datafile,
+		Logger:   logger,
 	})
 	if err != nil {
 		fmt.Printf("Error creating SDK instance: %v\n", err)
@@ -707,6 +712,16 @@ func Evaluate(args []string) {
 			return
 		}
 	}
+
+	// is ready
+	isReady := instance.IsReady()
+	fmt.Printf("\n\nIs ready: %v\n", isReady)
+	fmt.Printf("\n\n")
+
+	// is enabled
+	isEnabled := instance.IsEnabled(featureKey, context)
+	fmt.Printf("\n\nIs enabled: %v\n", isEnabled)
+	fmt.Printf("\n\n")
 
 	// Evaluate the feature
 	evaluation := instance.EvaluateFlag(featureKey, context)
