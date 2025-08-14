@@ -35,7 +35,8 @@ jobs:
           mkdir example-1
           (cd example-1 && npx @featurevisor/cli@2.x init --example=1)
           (cd example-1 && npm install)
+          (cd example-1 && npx featurevisor build)
           (cd example-1 && npx featurevisor test)
 
       - name: Run Featurevisor project tests against Go SDK
-        run: go run ./cli/main.go test --projectDirectoryPath=./example-1 --onlyFailures
+        run: go run ./cli/main.go test --projectDirectoryPath=./example-1
