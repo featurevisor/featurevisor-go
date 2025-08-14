@@ -4,6 +4,8 @@ This is a port of Featurevisor [Javascript SDK](https://featurevisor.com/docs/sd
 
 This SDK is compatible with [Featurevisor](https://featurevisor.com/) v2.0 projects and above.
 
+See example application [here](https://github.com/featurevisor/featurevisor-example-go).
+
 ## Table of contents <!-- omit in toc -->
 
 - [Installation](#installation)
@@ -750,7 +752,6 @@ go test ./...
 
 - Manually create a new release on [GitHub](https://github.com/featurevisor/featurevisor-go/releases)
 - Tag it with a prefix of `v`, like `v1.0.0`
-- GitHub Actions is set up to automatically notify [Go modules](https://pkg.go.dev/github.com/featurevisor/featurevisor-go) about the new release
 
 ## License
 
