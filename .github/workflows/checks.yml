@@ -1,0 +1,41 @@
+name: Checks
+
+on:
+  push:
+    branches: ["**"]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install dependencies
+        run: go mod tidy
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+
+      - name: Setup Featurevisor example-1 project
+        run: |
+          mkdir example-1
+          (cd example-1 && npx @featurevisor/cli@2.x init --example=1)
+          (cd example-1 && npm install)
+          (cd example-1 && npx featurevisor test)
+
+      - name: Run Featurevisor project tests against Go SDK
+        run: go run ./cli/main.go test --rootDirectoryPath=./example-1 --onlyFailures

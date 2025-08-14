@@ -1,2 +1,33 @@
-specs
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, coverage, and build output
+*.test
+*.out
+
+# Output of the go coverage tool
+coverage.*
+
+# Vendor directory (optional, if you commit vendor)
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# IDE/editor settings
+.idea/
+.vscode/
+*.swp
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
 build
+
+example-1
