@@ -56,7 +56,7 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
 In your Go application, install the SDK using Go modules:
 
 ```bash
-go get github.com/featurevisor/featurevisor-go/sdk
+go get github.com/featurevisor/featurevisor-go
 ```
 
 ## Initialization
@@ -70,7 +70,7 @@ import (
     "io"
     "net/http"
 
-    "github.com/featurevisor/featurevisor-go/sdk"
+    "github.com/featurevisor/featurevisor-go"
 )
 
 func main() {
@@ -87,12 +87,12 @@ func main() {
         panic(err)
     }
 
-    var datafileContent sdk.DatafileContent
+    var datafileContent featurevisor.DatafileContent
     if err := datafileContent.FromJSON(string(datafileBytes)); err != nil {
         panic(err)
     }
 
-    f := sdk.CreateInstance(sdk.InstanceOptions{
+    f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
         Datafile: datafileContent,
     })
 }
@@ -117,7 +117,7 @@ Think of the conditions that you define in your [segments](https://featurevisor.
 They are plain maps:
 
 ```go
-context := sdk.Context{
+context := featurevisor.Context{
     "userId": "123",
     "country": "nl",
     // ...other attributes
@@ -132,11 +132,11 @@ You can set context at the time of initialization:
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/sdk"
+    "github.com/featurevisor/featurevisor-go"
 )
 
-f := sdk.CreateInstance(sdk.InstanceOptions{
-    Context: sdk.Context{
+f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+    Context: featurevisor.Context{
         "deviceId": "123",
         "country":  "nl",
     },
@@ -150,7 +150,7 @@ This is useful for values that don't change too frequently and available at the 
 You can also set more context after the SDK has been initialized:
 
 ```go
-f.SetContext(sdk.Context{
+f.SetContext(featurevisor.Context{
     "userId": "234",
 })
 ```
@@ -162,7 +162,7 @@ This will merge the new context with the existing one (if already set).
 If you wish to fully replace the existing context, you can pass `true` in second argument:
 
 ```go
-f.SetContext(sdk.Context{
+f.SetContext(featurevisor.Context{
     "deviceId": "123",
     "userId":   "234",
     "country":  "nl",
@@ -175,7 +175,7 @@ f.SetContext(sdk.Context{
 You can optionally pass additional context manually for each and every evaluation separately, without needing to set it to the SDK instance affecting all evaluations:
 
 ```go
-context := sdk.Context{
+context := featurevisor.Context{
     "userId": "123",
     "country": "nl",
 }
@@ -206,7 +206,7 @@ if isEnabled {
 You can also pass additional context per evaluation:
 
 ```go
-isEnabled := f.IsEnabled(featureKey, sdk.Context{
+isEnabled := f.IsEnabled(featureKey, featurevisor.Context{
     // ...additional context
 })
 ```
@@ -230,7 +230,7 @@ if variation != nil && *variation == "treatment" {
 Additional context per evaluation can also be passed:
 
 ```go
-variation := f.GetVariation(featureKey, sdk.Context{
+variation := f.GetVariation(featureKey, featurevisor.Context{
     // ...additional context
 })
 ```
@@ -248,7 +248,7 @@ bgColorValue := f.GetVariable("my_feature", variableKey)
 Additional context per evaluation can also be passed:
 
 ```go
-bgColorValue := f.GetVariable("my_feature", variableKey, sdk.Context{
+bgColorValue := f.GetVariable("my_feature", variableKey, featurevisor.Context{
     // ...additional context
 })
 ```
@@ -272,7 +272,7 @@ f.GetVariableJSON(featureKey, variableKey, context)
 You can get evaluations of all features available in the SDK instance:
 
 ```go
-allEvaluations := f.GetAllEvaluations(sdk.Context{})
+allEvaluations := f.GetAllEvaluations(featurevisor.Context{})
 
 fmt.Printf("%+v\n", allEvaluations)
 // {
@@ -301,20 +301,20 @@ For the lifecycle of the SDK instance in your application, you can set some feat
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/sdk"
+    "github.com/featurevisor/featurevisor-go"
 )
 
-f := sdk.CreateInstance(sdk.InstanceOptions{
+f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
     Sticky: &StickyFeatures{
-        "myFeatureKey": sdk.StickyFeature{
+        "myFeatureKey": featurevisor.StickyFeature{
             Enabled: true,
             // optional
-            Variation: &sdk.VariationValue{Value: "treatment"},
+            Variation: &featurevisor.VariationValue{Value: "treatment"},
             Variables: map[string]interface{}{
                 "myVariableKey": "myVariableValue",
             },
         },
-        "anotherFeatureKey": sdk.StickyFeature{
+        "anotherFeatureKey": featurevisor.StickyFeature{
             Enabled: false,
         },
     },
@@ -328,15 +328,15 @@ Once initialized with sticky features, the SDK will look for values there first 
 You can also set sticky features after the SDK is initialized:
 
 ```go
-f.SetSticky(sdk.StickyFeatures{
-    "myFeatureKey": sdk.StickyFeature{
+f.SetSticky(featurevisor.StickyFeatures{
+    "myFeatureKey": featurevisor.StickyFeature{
         Enabled: true,
-        Variation: &sdk.VariationValue{Value: "treatment"},
+        Variation: &featurevisor.VariationValue{Value: "treatment"},
         Variables: map[string]interface{}{
             "myVariableKey": "myVariableValue",
         },
     },
-    "anotherFeatureKey": sdk.StickyFeature{
+    "anotherFeatureKey": featurevisor.StickyFeature{
         Enabled: false,
     },
 }, true) // replace existing sticky features (false by default)
@@ -371,10 +371,10 @@ import (
     "io"
     "net/http"
 
-    "github.com/featurevisor/featurevisor-go/sdk"
+    "github.com/featurevisor/featurevisor-go"
 )
 
-func updateDatafile(f *sdk.Featurevisor, datafileURL string) {
+func updateDatafile(f *featurevisor.Featurevisor, datafileURL string) {
     ticker := time.NewTicker(5 * time.Minute)
     defer ticker.Stop()
 
@@ -390,7 +390,7 @@ func updateDatafile(f *sdk.Featurevisor, datafileURL string) {
             continue
         }
 
-        var datafileContent sdk.DatafileContent
+        var datafileContent featurevisor.DatafileContent
         if err := datafileContent.FromJSON(string(datafileBytes)); err != nil {
             continue
         }
@@ -424,11 +424,11 @@ Setting `debug` level will print out all logs, including `info`, `warn`, and `er
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/sdk"
+    "github.com/featurevisor/featurevisor-go"
 )
 
-logLevel := sdk.LogLevelDebug
-f := sdk.CreateInstance(sdk.InstanceOptions{
+logLevel := featurevisor.LogLevelDebug
+f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
     LogLevel: &logLevel,
 })
 ```
@@ -436,8 +436,8 @@ f := sdk.CreateInstance(sdk.InstanceOptions{
 Alternatively, you can also set `logLevel` directly:
 
 ```go
-logLevel := sdk.LogLevelDebug
-f := sdk.CreateInstance(sdk.InstanceOptions{
+logLevel := featurevisor.LogLevelDebug
+f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
     LogLevel: &logLevel,
 })
 ```
@@ -445,7 +445,7 @@ f := sdk.CreateInstance(sdk.InstanceOptions{
 You can also set log level from SDK instance afterwards:
 
 ```go
-f.SetLogLevel(sdk.LogLevelDebug)
+f.SetLogLevel(featurevisor.LogLevelDebug)
 ```
 
 ### Handler
@@ -454,17 +454,17 @@ You can also pass your own log handler, if you do not wish to print the logs to 
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/sdk"
+    "github.com/featurevisor/featurevisor-go"
 )
 
-logger := sdk.NewLogger(sdk.CreateLoggerOptions{
-    Level: &sdk.LogLevelInfo,
-    Handler: func(level sdk.LogLevel, message string, details interface{}) {
+logger := featurevisor.NewLogger(featurevisor.CreateLoggerOptions{
+    Level: &featurevisor.LogLevelInfo,
+    Handler: func(level featurevisor.LogLevel, message string, details interface{}) {
         // do something with the log
     },
 })
 
-f := sdk.CreateInstance(sdk.InstanceOptions{
+f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
     Logger: logger,
 })
 ```
@@ -480,7 +480,7 @@ You can listen to these events that can occur at various stages in your applicat
 ### `datafile_set`
 
 ```go
-unsubscribe := f.On(sdk.EventNameDatafileSet, func(event sdk.Event) {
+unsubscribe := f.On(featurevisor.EventNameDatafileSet, func(event featurevisor.Event) {
     revision := event.Revision        // new revision
     previousRevision := event.PreviousRevision
     revisionChanged := event.RevisionChanged // true if revision has changed
@@ -507,7 +507,7 @@ compared to the previous datafile content that existed in the SDK instance.
 ### `context_set`
 
 ```go
-unsubscribe := f.On(sdk.EventNameContextSet, func(event sdk.Event) {
+unsubscribe := f.On(featurevisor.EventNameContextSet, func(event featurevisor.Event) {
     replaced := event.Replaced // true if context was replaced
     context := event.Context   // the new context
 
@@ -518,7 +518,7 @@ unsubscribe := f.On(sdk.EventNameContextSet, func(event sdk.Event) {
 ### `sticky_set`
 
 ```go
-unsubscribe := f.On(sdk.EventNameStickySet, func(event sdk.Event) {
+unsubscribe := f.On(featurevisor.EventNameStickySet, func(event featurevisor.Event) {
     replaced := event.Replaced // true if sticky features got replaced
     features := event.Features // list of all affected feature keys
 
@@ -568,27 +568,27 @@ A hook is a simple struct with a unique required `Name` and optional functions:
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/sdk"
+    "github.com/featurevisor/featurevisor-go"
 )
 
-myCustomHook := &sdk.Hook{
+myCustomHook := &featurevisor.Hook{
     // only required property
     Name: "my-custom-hook",
 
     // rest of the properties below are all optional per hook
 
     // before evaluation
-    Before: func(options sdk.EvaluateOptions) sdk.EvaluateOptions {
+    Before: func(options featurevisor.EvaluateOptions) featurevisor.EvaluateOptions {
         // update context before evaluation
         if options.Context == nil {
-            options.Context = sdk.Context{}
+            options.Context = featurevisor.Context{}
         }
         options.Context["someAdditionalAttribute"] = "value"
         return options
     },
 
     // after evaluation
-    After: func(evaluation sdk.Evaluation, options sdk.EvaluateOptions) {
+    After: func(evaluation featurevisor.Evaluation, options featurevisor.EvaluateOptions) {
         if evaluation.Reason == "error" {
             // log error
             return
@@ -596,13 +596,13 @@ myCustomHook := &sdk.Hook{
     },
 
     // configure bucket key
-    BucketKey: func(options sdk.EvaluateOptions) string {
+    BucketKey: func(options featurevisor.EvaluateOptions) string {
         // return custom bucket key
         return options.BucketKey
     },
 
     // configure bucket value (between 0 and 100,000)
-    BucketValue: func(options sdk.EvaluateOptions) int {
+    BucketValue: func(options featurevisor.EvaluateOptions) int {
         // return custom bucket value
         return options.BucketValue
     },
@@ -615,11 +615,11 @@ You can register hooks at the time of SDK initialization:
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/sdk"
+    "github.com/featurevisor/featurevisor-go"
 )
 
-f := sdk.CreateInstance(sdk.InstanceOptions{
-    Hooks: []*sdk.Hook{
+f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+    Hooks: []*featurevisor.Hook{
         myCustomHook,
     },
 })
@@ -640,7 +640,7 @@ But when using Featurevisor SDK in server-side applications, where a single serv
 That's where child instances come in handy:
 
 ```go
-childF := f.Spawn(sdk.Context{
+childF := f.Spawn(featurevisor.Context{
     // user or request specific context
     "userId": "123",
 })
