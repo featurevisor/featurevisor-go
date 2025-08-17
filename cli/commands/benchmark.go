@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/featurevisor/featurevisor-go/sdk"
+	featurevisor "github.com/featurevisor/featurevisor-go"
 )
 
 // BenchmarkOutput represents the result of a benchmark operation
@@ -17,16 +17,16 @@ type BenchmarkOutput struct {
 
 // benchmarkFeatureFlag benchmarks the feature flag evaluation
 func benchmarkFeatureFlag(
-	instance *sdk.Featurevisor,
+	instance *featurevisor.Featurevisor,
 	featureKey string,
-	context sdk.Context,
+	context featurevisor.Context,
 	n int,
 ) BenchmarkOutput {
 	start := time.Now()
 	var value interface{}
 
 	for i := 0; i < n; i++ {
-		value = instance.IsEnabled(featureKey, context, sdk.OverrideOptions{})
+		value = instance.IsEnabled(featureKey, context, featurevisor.OverrideOptions{})
 	}
 
 	duration := time.Since(start)
@@ -39,16 +39,16 @@ func benchmarkFeatureFlag(
 
 // benchmarkFeatureVariation benchmarks the feature variation evaluation
 func benchmarkFeatureVariation(
-	instance *sdk.Featurevisor,
+	instance *featurevisor.Featurevisor,
 	featureKey string,
-	context sdk.Context,
+	context featurevisor.Context,
 	n int,
 ) BenchmarkOutput {
 	start := time.Now()
 	var value interface{}
 
 	for i := 0; i < n; i++ {
-		value = instance.GetVariation(featureKey, context, sdk.OverrideOptions{})
+		value = instance.GetVariation(featureKey, context, featurevisor.OverrideOptions{})
 	}
 
 	duration := time.Since(start)
@@ -61,17 +61,17 @@ func benchmarkFeatureVariation(
 
 // benchmarkFeatureVariable benchmarks the feature variable evaluation
 func benchmarkFeatureVariable(
-	instance *sdk.Featurevisor,
+	instance *featurevisor.Featurevisor,
 	featureKey string,
 	variableKey string,
-	context sdk.Context,
+	context featurevisor.Context,
 	n int,
 ) BenchmarkOutput {
 	start := time.Now()
 	var value interface{}
 
 	for i := 0; i < n; i++ {
-		value = instance.GetVariable(featureKey, variableKey, context, sdk.OverrideOptions{})
+		value = instance.GetVariable(featureKey, variableKey, context, featurevisor.OverrideOptions{})
 	}
 
 	duration := time.Since(start)
@@ -139,15 +139,15 @@ func runBenchmark(opts CLIOptions) {
 		return
 	}
 
-	var context sdk.Context
+	var context featurevisor.Context
 	if opts.Context != "" {
 		json.Unmarshal([]byte(opts.Context), &context)
 	} else {
-		context = make(sdk.Context)
+		context = make(featurevisor.Context)
 	}
 
 	levelStr := getLoggerLevel(opts)
-	level := sdk.LogLevel(levelStr)
+	level := featurevisor.LogLevel(levelStr)
 
 	fmt.Println("")
 	fmt.Printf("Running benchmark for feature \"%s\"...\n", opts.Feature)
@@ -165,7 +165,7 @@ func runBenchmark(opts CLIOptions) {
 	datafile := datafilesByEnvironment[opts.Environment]
 
 	// Convert datafile to proper format
-	var datafileContent sdk.DatafileContent
+	var datafileContent featurevisor.DatafileContent
 	var datafileBytes []byte
 	var err error
 	if datafileBytes, err = json.Marshal(datafile); err == nil {
@@ -176,7 +176,7 @@ func runBenchmark(opts CLIOptions) {
 	datafileSize := len(datafileBytes)
 	fmt.Printf("Datafile size: %.2f kB\n", float64(datafileSize)/1024.0)
 
-	instance := sdk.CreateInstance(sdk.InstanceOptions{
+	instance := featurevisor.CreateInstance(featurevisor.InstanceOptions{
 		Datafile: datafileContent,
 		LogLevel: &level,
 	})

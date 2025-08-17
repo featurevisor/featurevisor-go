@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/featurevisor/featurevisor-go/sdk"
+	"github.com/featurevisor/featurevisor-go"
 )
 
 // UUID_LENGTHS matches the TypeScript implementation
@@ -96,28 +96,28 @@ func runAssessDistribution(opts CLIOptions) {
 		return
 	}
 
-	var context sdk.Context
+	var context featurevisor.Context
 	if opts.Context != "" {
 		json.Unmarshal([]byte(opts.Context), &context)
 	} else {
-		context = make(sdk.Context)
+		context = make(featurevisor.Context)
 	}
 	populateUuid := opts.PopulateUuid
 
 	levelStr := getLoggerLevel(opts)
-	level := sdk.LogLevel(levelStr)
+	level := featurevisor.LogLevel(levelStr)
 	datafilesByEnvironment := buildDatafiles(featurevisorProjectPath, []string{opts.Environment}, "", 0)
 
 	// Create SDK instance
 	datafile := datafilesByEnvironment[opts.Environment]
 
 	// Convert datafile to proper format
-	var datafileContent sdk.DatafileContent
+	var datafileContent featurevisor.DatafileContent
 	if datafileBytes, err := json.Marshal(datafile); err == nil {
 		json.Unmarshal(datafileBytes, &datafileContent)
 	}
 
-	instance := sdk.CreateInstance(sdk.InstanceOptions{
+	instance := featurevisor.CreateInstance(featurevisor.InstanceOptions{
 		Datafile: datafileContent,
 		LogLevel: &level,
 	})
@@ -148,7 +148,7 @@ func runAssessDistribution(opts CLIOptions) {
 	// Run evaluations
 	for i := 0; i < opts.N; i++ {
 		// Create a copy of context for this iteration
-		contextCopy := make(sdk.Context)
+		contextCopy := make(featurevisor.Context)
 		for k, v := range context {
 			contextCopy[k] = v
 		}
@@ -162,7 +162,7 @@ func runAssessDistribution(opts CLIOptions) {
 		}
 
 		// Evaluate flag
-		flagEvaluation := instance.IsEnabled(opts.Feature, contextCopy, sdk.OverrideOptions{})
+		flagEvaluation := instance.IsEnabled(opts.Feature, contextCopy, featurevisor.OverrideOptions{})
 		if flagEvaluation {
 			flagEvaluations["enabled"]++
 		} else {
@@ -171,7 +171,7 @@ func runAssessDistribution(opts CLIOptions) {
 
 		// Evaluate variation if feature has variations
 		if hasVariations {
-			variationEvaluation := instance.GetVariation(opts.Feature, contextCopy, sdk.OverrideOptions{})
+			variationEvaluation := instance.GetVariation(opts.Feature, contextCopy, featurevisor.OverrideOptions{})
 			if variationEvaluation != nil {
 				// Dereference the pointer to get the actual string value
 				variationValue := *variationEvaluation

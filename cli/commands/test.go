@@ -8,24 +8,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/featurevisor/featurevisor-go/sdk"
+	"github.com/featurevisor/featurevisor-go"
 )
 
 // TestFeature tests a feature with the given assertion
-func RunTestFeature(assertion map[string]interface{}, featureKey string, instance *sdk.Featurevisor, level string) AssertionResult {
-	context := sdk.Context{}
+func RunTestFeature(assertion map[string]interface{}, featureKey string, instance *featurevisor.Featurevisor, level string) AssertionResult {
+	context := featurevisor.Context{}
 	if ctx, ok := assertion["context"].(map[string]interface{}); ok {
-		context = sdk.Context(ctx)
+		context = featurevisor.Context(ctx)
 	}
 
 	// Set context and sticky for this assertion
 	instance.SetContext(context, false)
 	if sticky, ok := assertion["sticky"].(map[string]interface{}); ok {
 		// Convert sticky to proper format
-		stickyFeatures := sdk.StickyFeatures{}
+		stickyFeatures := featurevisor.StickyFeatures{}
 		for key, value := range sticky {
 			if featureSticky, ok := value.(map[string]interface{}); ok {
-				evaluatedFeature := sdk.EvaluatedFeature{}
+				evaluatedFeature := featurevisor.EvaluatedFeature{}
 				if enabled, ok := featureSticky["enabled"].(bool); ok {
 					evaluatedFeature.Enabled = enabled
 				}
@@ -35,19 +35,19 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 					}
 				}
 				if variables, ok := featureSticky["variables"].(map[string]interface{}); ok {
-					evaluatedFeature.Variables = make(map[sdk.VariableKey]sdk.VariableValue)
+					evaluatedFeature.Variables = make(map[featurevisor.VariableKey]featurevisor.VariableValue)
 					for varKey, varValue := range variables {
-						evaluatedFeature.Variables[sdk.VariableKey(varKey)] = varValue
+						evaluatedFeature.Variables[featurevisor.VariableKey(varKey)] = varValue
 					}
 				}
-				stickyFeatures[sdk.FeatureKey(key)] = evaluatedFeature
+				stickyFeatures[featurevisor.FeatureKey(key)] = evaluatedFeature
 			}
 		}
 		instance.SetSticky(stickyFeatures, false)
 	}
 
 	// Create override options
-	overrideOptions := sdk.OverrideOptions{
+	overrideOptions := featurevisor.OverrideOptions{
 		DefaultVariationValue: getDefaultVariationValue(assertion),
 	}
 
@@ -165,7 +165,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 		if variableEvals, ok := expectedEvaluations["variables"].(map[string]interface{}); ok {
 			for variableKey, expectedEval := range variableEvals {
 				if expectedEvalMap, ok := expectedEval.(map[string]interface{}); ok {
-					evaluation := instance.EvaluateVariable(featureKey, sdk.VariableKey(variableKey), context, overrideOptions)
+					evaluation := instance.EvaluateVariable(featureKey, featurevisor.VariableKey(variableKey), context, overrideOptions)
 					for key, expectedValue := range expectedEvalMap {
 						actualValue := getEvaluationValue(evaluation, key)
 						if !compareValues(actualValue, expectedValue) {
@@ -182,13 +182,13 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 	if children, ok := assertion["children"].([]interface{}); ok {
 		for _, child := range children {
 			if childMap, ok := child.(map[string]interface{}); ok {
-				childContext := sdk.Context{}
+				childContext := featurevisor.Context{}
 				if childCtx, ok := childMap["context"].(map[string]interface{}); ok {
-					childContext = sdk.Context(childCtx)
+					childContext = featurevisor.Context(childCtx)
 				}
 
 				// Create override options for child with sticky values
-				childOverrideOptions := sdk.OverrideOptions{
+				childOverrideOptions := featurevisor.OverrideOptions{
 					DefaultVariationValue: getDefaultVariationValue(childMap),
 				}
 
@@ -198,10 +198,10 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 				// Set sticky values for child if they exist
 				if sticky, ok := assertion["sticky"].(map[string]interface{}); ok {
 					// Convert sticky to proper format
-					stickyFeatures := sdk.StickyFeatures{}
+					stickyFeatures := featurevisor.StickyFeatures{}
 					for key, value := range sticky {
 						if featureSticky, ok := value.(map[string]interface{}); ok {
-							evaluatedFeature := sdk.EvaluatedFeature{}
+							evaluatedFeature := featurevisor.EvaluatedFeature{}
 							if enabled, ok := featureSticky["enabled"].(bool); ok {
 								evaluatedFeature.Enabled = enabled
 							}
@@ -211,12 +211,12 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 								}
 							}
 							if variables, ok := featureSticky["variables"].(map[string]interface{}); ok {
-								evaluatedFeature.Variables = make(map[sdk.VariableKey]sdk.VariableValue)
+								evaluatedFeature.Variables = make(map[featurevisor.VariableKey]featurevisor.VariableValue)
 								for varKey, varValue := range variables {
-									evaluatedFeature.Variables[sdk.VariableKey(varKey)] = varValue
+									evaluatedFeature.Variables[featurevisor.VariableKey(varKey)] = varValue
 								}
 							}
-							stickyFeatures[sdk.FeatureKey(key)] = evaluatedFeature
+							stickyFeatures[featurevisor.FeatureKey(key)] = evaluatedFeature
 						}
 					}
 					childInstance.SetSticky(stickyFeatures, false)
@@ -242,14 +242,14 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 }
 
 // TestFeatureChild tests a feature with child assertions
-func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, instance *sdk.FeaturevisorChild, level string) AssertionResult {
-	context := sdk.Context{}
+func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, instance *featurevisor.FeaturevisorChild, level string) AssertionResult {
+	context := featurevisor.Context{}
 	if ctx, ok := assertion["context"].(map[string]interface{}); ok {
-		context = sdk.Context(ctx)
+		context = featurevisor.Context(ctx)
 	}
 
 	// Create override options
-	overrideOptions := sdk.OverrideOptions{
+	overrideOptions := featurevisor.OverrideOptions{
 		DefaultVariationValue: getDefaultVariationValue(assertion),
 	}
 
@@ -348,23 +348,23 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 
 // TestSegment tests a segment with the given assertion
 func RunTestSegment(assertion map[string]interface{}, segment map[string]interface{}, level string) AssertionResult {
-	context := sdk.Context{}
+	context := featurevisor.Context{}
 	if ctx, ok := assertion["context"].(map[string]interface{}); ok {
-		context = sdk.Context(ctx)
+		context = featurevisor.Context(ctx)
 	}
 
 	conditions := segment["conditions"]
 
-	datafile := sdk.DatafileContent{
+	datafile := featurevisor.DatafileContent{
 		SchemaVersion: "2",
 		Revision:      "tester",
-		Features:      make(map[sdk.FeatureKey]sdk.Feature),
-		Segments:      make(map[sdk.SegmentKey]sdk.Segment),
+		Features:      make(map[featurevisor.FeatureKey]featurevisor.Feature),
+		Segments:      make(map[featurevisor.SegmentKey]featurevisor.Segment),
 	}
 
-	levelStr := sdk.LogLevel(level)
-	logger := sdk.NewLogger(sdk.CreateLoggerOptions{Level: &levelStr})
-	datafileReader := sdk.NewDatafileReader(sdk.DatafileReaderOptions{
+	levelStr := featurevisor.LogLevel(level)
+	logger := featurevisor.NewLogger(featurevisor.CreateLoggerOptions{Level: &levelStr})
+	datafileReader := featurevisor.NewDatafileReader(featurevisor.DatafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})
@@ -400,7 +400,7 @@ func getDefaultVariationValue(assertion map[string]interface{}) *string {
 }
 
 // getEvaluationValue extracts a value from an evaluation based on the key
-func getEvaluationValue(evaluation sdk.Evaluation, key string) interface{} {
+func getEvaluationValue(evaluation featurevisor.Evaluation, key string) interface{} {
 	switch key {
 	case "type":
 		return string(evaluation.Type)
@@ -464,10 +464,10 @@ func getEvaluationValue(evaluation sdk.Evaluation, key string) interface{} {
 	}
 }
 
-func getDefaultVariableValue(assertion map[string]interface{}, variableKey string) sdk.VariableValue {
+func getDefaultVariableValue(assertion map[string]interface{}, variableKey string) featurevisor.VariableValue {
 	if defaultValues, ok := assertion["defaultVariableValues"].(map[string]interface{}); ok {
 		if defaultVal, ok := defaultValues[variableKey]; ok {
-			if val, ok := defaultVal.(sdk.VariableValue); ok {
+			if val, ok := defaultVal.(featurevisor.VariableValue); ok {
 				return val
 			}
 		}
@@ -686,26 +686,26 @@ func runTest(opts CLIOptions) {
 	}
 
 	// Create SDK instances for each environment
-	sdkInstancesByEnvironment := make(map[string]*sdk.Featurevisor)
+	sdkInstancesByEnvironment := make(map[string]*featurevisor.Featurevisor)
 
 	for _, environment := range environments {
 		if envStr, ok := environment.(string); ok {
 			datafile := datafilesByEnvironment[envStr]
 
 			// Convert datafile to proper format
-			var datafileContent sdk.DatafileContent
+			var datafileContent featurevisor.DatafileContent
 			if datafileBytes, err := json.Marshal(datafile); err == nil {
 				json.Unmarshal(datafileBytes, &datafileContent)
 			}
 
-			levelStr := sdk.LogLevel(level)
-			instance := sdk.CreateInstance(sdk.InstanceOptions{
+			levelStr := featurevisor.LogLevel(level)
+			instance := featurevisor.CreateInstance(featurevisor.InstanceOptions{
 				Datafile: datafileContent,
 				LogLevel: &levelStr,
-				Hooks: []*sdk.Hook{
+				Hooks: []*featurevisor.Hook{
 					{
 						Name: "tester-hook",
-						BucketValue: func(options sdk.ConfigureBucketValueOptions) int {
+						BucketValue: func(options featurevisor.ConfigureBucketValueOptions) int {
 							// This will be overridden per assertion if needed
 							return options.BucketValue
 						},
@@ -749,19 +749,19 @@ func runTest(opts CLIOptions) {
 					// If "at" parameter is provided, create a new instance with the specific hook
 					if _, hasAt := assertionMap["at"]; hasAt {
 						datafile := datafilesByEnvironment[environment]
-						var datafileContent sdk.DatafileContent
+						var datafileContent featurevisor.DatafileContent
 						if datafileBytes, err := json.Marshal(datafile); err == nil {
 							json.Unmarshal(datafileBytes, &datafileContent)
 						}
 
-						levelStr := sdk.LogLevel(level)
-						instance = sdk.CreateInstance(sdk.InstanceOptions{
+						levelStr := featurevisor.LogLevel(level)
+						instance = featurevisor.CreateInstance(featurevisor.InstanceOptions{
 							Datafile: datafileContent,
 							LogLevel: &levelStr,
-							Hooks: []*sdk.Hook{
+							Hooks: []*featurevisor.Hook{
 								{
 									Name: "tester-hook",
-									BucketValue: func(options sdk.ConfigureBucketValueOptions) int {
+									BucketValue: func(options featurevisor.ConfigureBucketValueOptions) int {
 										if at, ok := assertionMap["at"].(float64); ok {
 											// Match JavaScript implementation exactly: assertion.at * (MAX_BUCKETED_NUMBER / 100)
 											// MAX_BUCKETED_NUMBER is 100000, so this gives us 0-100000 range
