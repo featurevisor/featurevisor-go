@@ -39,4 +39,4 @@ jobs:
           (cd example-1 && npx featurevisor test)
 
       - name: Run Featurevisor project tests against Go SDK
-        run: go run ./cli/main.go test --projectDirectoryPath=./example-1
+        run: go run ./cmd/main.go test --projectDirectoryPath=./example-1

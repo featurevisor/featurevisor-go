@@ -1,9 +1,9 @@
 build:
 	mkdir -p build
-	go build -o build/featurevisor-go cli/main.go
+	go build -o build/featurevisor-go cmd/main.go
 
 test:
-	go test ./sdk -v
+	go test ./... -v
 
 clean:
 	rm -rf build
