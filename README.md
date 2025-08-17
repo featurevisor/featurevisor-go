@@ -682,20 +682,20 @@ f.Close()
 
 ## CLI usage
 
-This package also provides a CLI tool for running your Featurevisor project's test specs and benchmarking against this Go SDK:
+This package also provides a CLI tool for running your Featurevisor [project](https://featurevisor.com/docs/projects/)'s test specs and benchmarking against this Go SDK:
 
 ### Test
 
 Learn more about testing [here](https://featurevisor.com/docs/testing/).
 
 ```bash
-go run cli/main.go test --projectDirectoryPath="/absolute/path/to/your/featurevisor/project"
+go run cmd/main.go test --projectDirectoryPath="/absolute/path/to/your/featurevisor/project"
 ```
 
 Additional options that are available:
 
 ```bash
-go run cli/main.go test \
+go run cmd/main.go test \
     --projectDirectoryPath="/absolute/path/to/your/featurevisor/project" \
     --quiet|verbose \
     --onlyFailures \
@@ -705,10 +705,10 @@ go run cli/main.go test \
 
 ### Benchmark
 
-Learn more about benchmarking [here](https://featurevisor.com/docs/cli/#benchmarking).
+Learn more about benchmarking [here](https://featurevisor.com/docs/cmd/#benchmarking).
 
 ```bash
-go run cli/main.go benchmark \
+go run cmd/main.go benchmark \
     --projectDirectoryPath="/absolute/path/to/your/featurevisor/project" \
     --environment="production" \
     --feature="myFeatureKey" \
@@ -718,10 +718,10 @@ go run cli/main.go benchmark \
 
 ### Assess distribution
 
-Learn more about assessing distribution [here](https://featurevisor.com/docs/cli/#assess-distribution).
+Learn more about assessing distribution [here](https://featurevisor.com/docs/cmd/#assess-distribution).
 
 ```bash
-go run cli/main.go assess-distribution \
+go run cmd/main.go assess-distribution \
     --projectDirectoryPath="/absolute/path/to/your/featurevisor/project" \
     --environment=production \
     --feature=foo \
