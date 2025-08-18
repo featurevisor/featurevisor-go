@@ -44,7 +44,7 @@ func TestRequiredFeaturesSimple(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk := CreateInstance(InstanceOptions{
+	sdk := CreateInstance(Options{
 		Datafile: datafile1,
 	})
 
@@ -92,7 +92,7 @@ func TestRequiredFeaturesSimple(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk2 := CreateInstance(InstanceOptions{
+	sdk2 := CreateInstance(Options{
 		Datafile: datafile2,
 	})
 
@@ -153,7 +153,7 @@ func TestRequiredFeaturesWithVariation(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk := CreateInstance(InstanceOptions{
+	sdk := CreateInstance(Options{
 		Datafile: datafile1,
 	})
 
@@ -212,7 +212,7 @@ func TestRequiredFeaturesWithVariation(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk2 := CreateInstance(InstanceOptions{
+	sdk2 := CreateInstance(Options{
 		Datafile: datafile2,
 	})
 

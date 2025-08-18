@@ -12,8 +12,8 @@ type OverrideOptions struct {
 	DefaultVariableValue  VariableValue
 }
 
-// InstanceOptions contains options for creating an instance
-type InstanceOptions struct {
+// Options contains options for creating an instance
+type Options struct {
 	Datafile interface{} // DatafileContent | string
 	Context  Context
 	LogLevel *LogLevel
@@ -36,7 +36,7 @@ type Featurevisor struct {
 }
 
 // NewFeaturevisor creates a new Featurevisor instance
-func NewFeaturevisor(options InstanceOptions) *Featurevisor {
+func NewFeaturevisor(options Options) *Featurevisor {
 	// Set default context
 	context := Context{}
 	if options.Context != nil {
@@ -264,7 +264,7 @@ func (i *Featurevisor) Spawn(args ...interface{}) *FeaturevisorChild {
 		}
 	}
 
-	return NewFeaturevisorChild(ChildInstanceOptions{
+	return NewFeaturevisorChild(ChildOptions{
 		Parent:  i,
 		Context: i.GetContext(contextValue),
 		Sticky:  optionsValue.Sticky,
@@ -626,6 +626,6 @@ func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, 
 }
 
 // CreateInstance creates a new Featurevisor instance
-func CreateInstance(options InstanceOptions) *Featurevisor {
+func CreateInstance(options Options) *Featurevisor {
 	return NewFeaturevisor(options)
 }

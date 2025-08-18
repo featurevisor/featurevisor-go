@@ -92,7 +92,7 @@ func main() {
         panic(err)
     }
 
-    f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+    f := featurevisor.CreateInstance(featurevisor.Options{
         Datafile: datafileContent,
     })
 }
@@ -135,7 +135,7 @@ import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+f := featurevisor.CreateInstance(featurevisor.Options{
     Context: featurevisor.Context{
         "deviceId": "123",
         "country":  "nl",
@@ -304,7 +304,7 @@ import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+f := featurevisor.CreateInstance(featurevisor.Options{
     Sticky: &StickyFeatures{
         "myFeatureKey": featurevisor.StickyFeature{
             Enabled: true,
@@ -428,7 +428,7 @@ import (
 )
 
 logLevel := featurevisor.LogLevelDebug
-f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+f := featurevisor.CreateInstance(featurevisor.Options{
     LogLevel: &logLevel,
 })
 ```
@@ -437,7 +437,7 @@ Alternatively, you can also set `logLevel` directly:
 
 ```go
 logLevel := featurevisor.LogLevelDebug
-f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+f := featurevisor.CreateInstance(featurevisor.Options{
     LogLevel: &logLevel,
 })
 ```
@@ -464,7 +464,7 @@ logger := featurevisor.NewLogger(featurevisor.CreateLoggerOptions{
     },
 })
 
-f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+f := featurevisor.CreateInstance(featurevisor.Options{
     Logger: logger,
 })
 ```
@@ -618,7 +618,7 @@ import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-f := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+f := featurevisor.CreateInstance(featurevisor.Options{
     Hooks: []*featurevisor.Hook{
         myCustomHook,
     },

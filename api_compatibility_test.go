@@ -51,7 +51,7 @@ func TestAPICompatibilityWithStringFeatureKey(t *testing.T) {
 	}
 
 	// Create instance
-	instance := NewFeaturevisor(InstanceOptions{
+	instance := NewFeaturevisor(Options{
 		Datafile: datafile,
 		Context:  Context{"userId": "123"},
 	})
@@ -108,7 +108,7 @@ func TestAPICompatibilityWithStringFeatureKey(t *testing.T) {
 
 func TestAPICompatibilityWithNonExistentFeature(t *testing.T) {
 	// Create instance with empty datafile
-	instance := NewFeaturevisor(InstanceOptions{
+	instance := NewFeaturevisor(Options{
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
 			Revision:      "test",
@@ -665,7 +665,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 	t.Run("allowSignup", func(t *testing.T) {
 		// Test Netherlands (NL) - should always get treatment variation
 		// Using bucket value 60000 (60%) to ensure we get treatment variation
-		instance := NewFeaturevisor(InstanceOptions{
+		instance := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country":  "nl",
@@ -712,7 +712,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 		}
 
 		// Test Switzerland (CH) - should get treatment variation based on weight
-		instanceCH := NewFeaturevisor(InstanceOptions{
+		instanceCH := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country":  "ch",
@@ -735,7 +735,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 		}
 
 		// Test Germany (DE) - should get control variation in everyone segment
-		instanceDE := NewFeaturevisor(InstanceOptions{
+		instanceDE := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country":  "de",
@@ -762,7 +762,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 	t.Run("bar", func(t *testing.T) {
 		// Test with US context (should get control variation at low bucket values)
 		// Using bucket value 15000 (15%) to get control variation
-		instance := NewFeaturevisor(InstanceOptions{
+		instance := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country": "us",
@@ -802,7 +802,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 
 		// Test with Germany context (should get variation 'b' with overrides)
 		// Using bucket value 20000 (20%) to get variation 'b'
-		instanceDE := NewFeaturevisor(InstanceOptions{
+		instanceDE := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country": "de",
@@ -829,7 +829,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 	t.Run("foo", func(t *testing.T) {
 		// Test with mobile + Germany context (should get treatment variation)
 		// Using bucket value 60000 (60%) to get treatment variation
-		instance := NewFeaturevisor(InstanceOptions{
+		instance := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country": "de",
@@ -874,7 +874,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 		}
 
 		// Test force rule
-		instanceForce := NewFeaturevisor(InstanceOptions{
+		instanceForce := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"userId": "123",
@@ -905,7 +905,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 	t.Run("sidebar", func(t *testing.T) {
 		// Test with Netherlands context (should get treatment variation)
 		// Using bucket value 90000 (90%) to get treatment variation
-		instance := NewFeaturevisor(InstanceOptions{
+		instance := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country": "nl",
@@ -958,7 +958,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 
 		// Test with Germany context (should get color override)
 		// Using bucket value 90000 (90%) to get treatment variation
-		instanceDE := NewFeaturevisor(InstanceOptions{
+		instanceDE := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country": "de",
@@ -990,7 +990,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 	t.Run("qux", func(t *testing.T) {
 		// Test with Netherlands context (should get variation 'b' based on allocation)
 		// Using bucket value 70000 (70%) to get variation 'b'
-		instance := NewFeaturevisor(InstanceOptions{
+		instance := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country": "nl",
@@ -1025,7 +1025,7 @@ func TestProductionDatafileFeatures(t *testing.T) {
 
 		// Test with Germany context (should get variation 'b' based on allocation)
 		// Using bucket value 70000 (70%) to get variation 'b'
-		instanceDE := NewFeaturevisor(InstanceOptions{
+		instanceDE := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country": "de",
@@ -1095,7 +1095,7 @@ func TestProductionDatafileSegments(t *testing.T) {
 	// Test segment evaluation
 	t.Run("segmentEvaluation", func(t *testing.T) {
 		// Test Germany segment
-		instance := NewFeaturevisor(InstanceOptions{
+		instance := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country": "de",
@@ -1109,7 +1109,7 @@ func TestProductionDatafileSegments(t *testing.T) {
 		}
 
 		// Test Netherlands segment (should match because of everyone segment rule)
-		instanceNL := NewFeaturevisor(InstanceOptions{
+		instanceNL := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"country": "nl",
@@ -1123,7 +1123,7 @@ func TestProductionDatafileSegments(t *testing.T) {
 		}
 
 		// Test mobile segment
-		_ = NewFeaturevisor(InstanceOptions{
+		_ = NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"device": "mobile",
@@ -1132,7 +1132,7 @@ func TestProductionDatafileSegments(t *testing.T) {
 		})
 
 		// Test everyone segment
-		instanceEveryone := NewFeaturevisor(InstanceOptions{
+		instanceEveryone := NewFeaturevisor(Options{
 			Datafile: datafile,
 			Context: Context{
 				"userId": "test-user",

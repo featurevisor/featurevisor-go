@@ -39,7 +39,7 @@ func TestStickyFeaturesInitialization(t *testing.T) {
 	}
 
 	// Create instance with sticky features and datafile
-	instance := CreateInstance(InstanceOptions{
+	instance := CreateInstance(Options{
 		Datafile: datafileContent,
 		Sticky: &StickyFeatures{
 			"test": EvaluatedFeature{
@@ -122,7 +122,7 @@ func TestStickyFeaturesInitialization(t *testing.T) {
 
 // TestSetStickyVariadicSignature tests that the new variadic signature works correctly
 func TestSetStickyVariadicSignature(t *testing.T) {
-	instance := CreateInstance(InstanceOptions{})
+	instance := CreateInstance(Options{})
 
 	// Test calling without replace parameter (should default to false)
 	sticky1 := StickyFeatures{"test1": EvaluatedFeature{Enabled: true}}

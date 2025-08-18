@@ -49,7 +49,7 @@ func TestIndividuallyNamedSegments(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk := CreateInstance(InstanceOptions{
+	sdk := CreateInstance(Options{
 		Datafile: datafile,
 	})
 

@@ -1,7 +1,7 @@
 package featurevisor
 
-// ChildInstanceOptions contains options for creating a child instance
-type ChildInstanceOptions struct {
+// ChildOptions contains options for creating a child instance
+type ChildOptions struct {
 	Parent  *Featurevisor
 	Context Context
 	Sticky  *StickyFeatures
@@ -15,7 +15,7 @@ type FeaturevisorChild struct {
 }
 
 // NewFeaturevisorChild creates a new child instance
-func NewFeaturevisorChild(options ChildInstanceOptions) *FeaturevisorChild {
+func NewFeaturevisorChild(options ChildOptions) *FeaturevisorChild {
 	return &FeaturevisorChild{
 		parent:  options.Parent,
 		context: options.Context,
