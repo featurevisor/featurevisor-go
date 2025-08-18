@@ -699,7 +699,7 @@ func runTest(opts CLIOptions) {
 			}
 
 			levelStr := featurevisor.LogLevel(level)
-			instance := featurevisor.CreateInstance(featurevisor.InstanceOptions{
+			instance := featurevisor.CreateInstance(featurevisor.Options{
 				Datafile: datafileContent,
 				LogLevel: &levelStr,
 				Hooks: []*featurevisor.Hook{
@@ -755,7 +755,7 @@ func runTest(opts CLIOptions) {
 						}
 
 						levelStr := featurevisor.LogLevel(level)
-						instance = featurevisor.CreateInstance(featurevisor.InstanceOptions{
+						instance = featurevisor.CreateInstance(featurevisor.Options{
 							Datafile: datafileContent,
 							LogLevel: &levelStr,
 							Hooks: []*featurevisor.Hook{

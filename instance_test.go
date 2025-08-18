@@ -7,7 +7,7 @@ import (
 
 func TestCreateInstance(t *testing.T) {
 	// Test that CreateInstance is a function
-	instance := CreateInstance(InstanceOptions{})
+	instance := CreateInstance(Options{})
 	if instance == nil {
 		t.Fatal("Expected instance to be created")
 	}
@@ -25,7 +25,7 @@ func TestCreateInstance(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance = CreateInstance(InstanceOptions{
+	instance = CreateInstance(Options{
 		Datafile: datafile,
 	})
 
@@ -78,7 +78,7 @@ func TestPlainBucketBy(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(InstanceOptions{
+	instance := CreateInstance(Options{
 		Datafile: datafile,
 		Hooks: []*Hook{
 			{
@@ -142,7 +142,7 @@ func TestAndBucketBy(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(InstanceOptions{
+	instance := CreateInstance(Options{
 		Datafile: datafile,
 		Hooks: []*Hook{
 			{
@@ -207,7 +207,7 @@ func TestOrBucketBy(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(InstanceOptions{
+	instance := CreateInstance(Options{
 		Datafile: datafile,
 		Hooks: []*Hook{
 			{
@@ -288,7 +288,7 @@ func TestBeforeHook(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(InstanceOptions{
+	instance := CreateInstance(Options{
 		Datafile: datafile,
 		Hooks: []*Hook{
 			{
@@ -362,7 +362,7 @@ func TestAfterHook(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(InstanceOptions{
+	instance := CreateInstance(Options{
 		Datafile: datafile,
 		Hooks: []*Hook{
 			{
@@ -500,7 +500,7 @@ func TestGetAllEvaluations(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(InstanceOptions{
+	instance := CreateInstance(Options{
 		Datafile: datafile,
 	})
 
