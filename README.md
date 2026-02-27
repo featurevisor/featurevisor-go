@@ -51,6 +51,8 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
   - [Releasing](#releasing)
 - [License](#license)
 
+<!-- FEATUREVISOR_DOCS_BEGIN -->
+
 ## Installation
 
 In your Go application, install the SDK using Go modules:
@@ -771,6 +773,8 @@ go run cmd/main.go assess-distribution \
     --populateUuid=deviceId \
     --n=1000
 ```
+
+<!-- FEATUREVISOR_DOCS_END -->
 
 ## Development of this package
 
