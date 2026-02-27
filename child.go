@@ -12,6 +12,7 @@ type FeaturevisorChild struct {
 	parent  *Featurevisor
 	context Context
 	sticky  *StickyFeatures
+	emitter *Emitter
 }
 
 // NewFeaturevisorChild creates a new child instance
@@ -20,7 +21,22 @@ func NewFeaturevisorChild(options ChildOptions) *FeaturevisorChild {
 		parent:  options.Parent,
 		context: options.Context,
 		sticky:  options.Sticky,
+		emitter: NewEmitter(),
 	}
+}
+
+// On adds an event listener
+func (c *FeaturevisorChild) On(eventName EventName, callback EventCallback) Unsubscribe {
+	if eventName == EventNameContextSet || eventName == EventNameStickySet {
+		return c.emitter.On(eventName, callback)
+	}
+
+	return c.parent.On(eventName, callback)
+}
+
+// Close closes child instance listeners
+func (c *FeaturevisorChild) Close() {
+	c.emitter.ClearAll()
 }
 
 // SetContext sets the context
@@ -38,24 +54,24 @@ func (c *FeaturevisorChild) SetContext(context Context, replace ...bool) {
 			c.context[key] = value
 		}
 	}
+
+	c.emitter.Trigger(EventNameContextSet, EventDetails{
+		"context":  c.context,
+		"replaced": replaceValue,
+	})
 }
 
 // GetContext returns the context
 func (c *FeaturevisorChild) GetContext(context Context) Context {
-	if context == nil {
-		return c.context
-	}
-
-	// Merge contexts
-	result := Context{}
+	merged := Context{}
 	for key, value := range c.context {
-		result[key] = value
+		merged[key] = value
 	}
 	for key, value := range context {
-		result[key] = value
+		merged[key] = value
 	}
 
-	return result
+	return c.parent.GetContext(merged)
 }
 
 // SetSticky sets sticky features
@@ -86,8 +102,7 @@ func (c *FeaturevisorChild) SetSticky(sticky StickyFeatures, replace ...bool) {
 
 	params := getParamsForStickySetEvent(previousStickyFeatures, *c.sticky, replaceValue)
 
-	c.parent.logger.Info("sticky features set", params)
-	c.parent.emitter.Trigger(EventNameStickySet, EventDetails(params))
+	c.emitter.Trigger(EventNameStickySet, EventDetails(params))
 }
 
 // getEvaluationDependencies gets evaluation dependencies

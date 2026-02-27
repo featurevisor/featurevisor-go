@@ -2,6 +2,7 @@ package featurevisor
 
 import (
 	"encoding/json"
+	"fmt"
 )
 
 // OverrideOptions contains options for overriding evaluation
@@ -79,28 +80,10 @@ func NewFeaturevisor(options Options) *Featurevisor {
 
 	// If datafile is provided, set it
 	if options.Datafile != nil {
-		var datafileContent DatafileContent
-
-		if datafileStr, ok := options.Datafile.(string); ok {
-			// Parse JSON string using DatafileContent.FromJSON
-			if err := datafileContent.FromJSON(datafileStr); err == nil {
-				datafileReader = NewDatafileReader(DatafileReaderOptions{
-					Datafile: datafileContent,
-					Logger:   logger,
-				})
-			}
-		} else if datafileMap, ok := options.Datafile.(map[string]interface{}); ok {
-			// Convert map to DatafileContent
-			if datafileBytes, err := json.Marshal(datafileMap); err == nil {
-				if err := datafileContent.FromJSON(string(datafileBytes)); err == nil {
-					datafileReader = NewDatafileReader(DatafileReaderOptions{
-						Datafile: datafileContent,
-						Logger:   logger,
-					})
-				}
-			}
-		} else if datafileContent, ok := options.Datafile.(DatafileContent); ok {
-			// Direct DatafileContent
+		datafileContent, err := parseDatafileInput(options.Datafile)
+		if err != nil {
+			logger.Error("could not parse datafile", LogDetails{"error": err})
+		} else {
 			datafileReader = NewDatafileReader(DatafileReaderOptions{
 				Datafile: datafileContent,
 				Logger:   logger,
@@ -128,15 +111,18 @@ func (i *Featurevisor) SetLogLevel(level LogLevel) {
 }
 
 // SetDatafile sets the datafile
-func (i *Featurevisor) SetDatafile(datafile DatafileContent) {
-	datafileContent := datafile
+func (i *Featurevisor) SetDatafile(datafile interface{}) {
+	datafileContent, err := parseDatafileInput(datafile)
+	if err != nil {
+		i.logger.Error("could not parse datafile", LogDetails{"error": err})
+		return
+	}
 
 	newDatafileReader := NewDatafileReader(DatafileReaderOptions{
 		Datafile: datafileContent,
 		Logger:   i.logger,
 	})
 
-	// Get details for datafile set event
 	details := getParamsForDatafileSetEvent(i.datafileReader, newDatafileReader)
 
 	i.datafileReader = newDatafileReader
@@ -193,8 +179,8 @@ func (i *Featurevisor) AddHook(hook *Hook) {
 }
 
 // On adds an event listener
-func (i *Featurevisor) On(eventName EventName, callback EventCallback) {
-	i.emitter.On(eventName, callback)
+func (i *Featurevisor) On(eventName EventName, callback EventCallback) Unsubscribe {
+	return i.emitter.On(eventName, callback)
 }
 
 // Close closes the instance
@@ -628,4 +614,36 @@ func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, 
 // CreateInstance creates a new Featurevisor instance
 func CreateInstance(options Options) *Featurevisor {
 	return NewFeaturevisor(options)
+}
+
+func parseDatafileInput(datafile interface{}) (DatafileContent, error) {
+	var datafileContent DatafileContent
+
+	switch value := datafile.(type) {
+	case string:
+		if err := datafileContent.FromJSON(value); err != nil {
+			return DatafileContent{}, fmt.Errorf("invalid datafile string: %w", err)
+		}
+		return datafileContent, nil
+	case map[string]interface{}:
+		bytes, err := json.Marshal(value)
+		if err != nil {
+			return DatafileContent{}, fmt.Errorf("failed to marshal datafile map: %w", err)
+		}
+
+		if err := datafileContent.FromJSON(string(bytes)); err != nil {
+			return DatafileContent{}, fmt.Errorf("invalid datafile map: %w", err)
+		}
+
+		return datafileContent, nil
+	case DatafileContent:
+		return value, nil
+	case *DatafileContent:
+		if value == nil {
+			return DatafileContent{}, fmt.Errorf("datafile pointer is nil")
+		}
+		return *value, nil
+	default:
+		return DatafileContent{}, fmt.Errorf("unsupported datafile input type: %T", datafile)
+	}
 }

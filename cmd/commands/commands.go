@@ -21,6 +21,8 @@ type CLIOptions struct {
 	Variation            bool
 	Verbose              bool
 	Inflate              int
+	WithScopes           bool
+	WithTags             bool
 	ShowDatafile         bool
 	SchemaVersion        string
 	ProjectDirectoryPath string
@@ -59,6 +61,8 @@ func ParseCLIOptions(args []string) CLIOptions {
 	fs.BoolVar(&opts.Variation, "variation", false, "Variation mode")
 	fs.BoolVar(&opts.Verbose, "verbose", false, "Verbose mode")
 	fs.IntVar(&opts.Inflate, "inflate", 0, "Inflate mode")
+	fs.BoolVar(&opts.WithScopes, "with-scopes", false, "Test with scoped datafiles")
+	fs.BoolVar(&opts.WithTags, "with-tags", false, "Test with tagged datafiles")
 	fs.BoolVar(&opts.ShowDatafile, "showDatafile", false, "Show datafile")
 	fs.StringVar(&opts.SchemaVersion, "schemaVersion", "", "Schema version")
 	fs.StringVar(&opts.ProjectDirectoryPath, "projectDirectoryPath", "", "Project directory path")

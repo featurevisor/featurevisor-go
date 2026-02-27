@@ -42,15 +42,7 @@ func GetValueByType(value interface{}, fieldType string) interface{} {
 		}
 		return nil
 	case "boolean":
-		switch v := value.(type) {
-		case bool:
-			return v
-		case string:
-			return v == "true"
-		case int:
-			return v != 0
-		}
-		return false
+		return value == true
 	case "array":
 		if arr, ok := value.([]interface{}); ok {
 			return arr

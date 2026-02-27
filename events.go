@@ -80,9 +80,6 @@ func getParamsForDatafileSetEvent(previousDatafileReader *DatafileReader, newDat
 		"previousRevision": previousRevision,
 		"revisionChanged":  previousRevision != newRevision,
 		"features":         allAffectedFeatures,
-		"removedFeatures":  removedFeatures,
-		"changedFeatures":  changedFeatures,
-		"addedFeatures":    addedFeatures,
 	}
 }
 

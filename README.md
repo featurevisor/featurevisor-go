@@ -350,6 +350,8 @@ You may also initialize the SDK without passing `datafile`, and set it later on:
 f.SetDatafile(datafileContent)
 ```
 
+`SetDatafile` accepts either parsed `featurevisor.DatafileContent` or a raw JSON string.
+
 ### Updating datafile
 
 You can set the datafile as many times as you want in your application, which will result in emitting a [`datafile_set`](#datafile-set) event that you can listen and react to accordingly.
@@ -699,8 +701,25 @@ go run cmd/main.go test \
     --projectDirectoryPath="/absolute/path/to/your/featurevisor/project" \
     --quiet|verbose \
     --onlyFailures \
+    --with-scopes \
+    --with-tags \
     --keyPattern="myFeatureKey" \
     --assertionPattern="#1"
+```
+
+`--with-scopes` and `--with-tags` match Featurevisor CLI behavior by generating and testing against scoped/tagged datafiles via `npx featurevisor build`.
+
+If you want to validate parity locally against the JavaScript SDK runner, you can use the bundled example project:
+
+```bash
+cd monorepo/examples/example-1
+npx featurevisor test --with-scopes --with-tags
+
+# from repository root:
+go run cmd/main.go test \
+  --projectDirectoryPath="/absolute/path/to/featurevisor-go/monorepo/examples/example-1" \
+  --with-scopes \
+  --with-tags
 ```
 
 ### Benchmark

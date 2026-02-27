@@ -243,7 +243,7 @@ type RequiredWithVariation struct {
 type Required interface{}
 
 // Weight represents a weight value (0 to 100)
-type Weight = int
+type Weight = float64
 
 // EnvironmentKey represents the key of an environment
 type EnvironmentKey = string
@@ -371,6 +371,35 @@ const (
 // VariableValue represents the value of a variable
 type VariableValue interface{}
 
+// Value represents schema validation values
+type Value interface{}
+
+// SchemaKey represents reusable schema key
+type SchemaKey = string
+
+// Schema represents JSON schema-like validations used by variable schema.
+type Schema struct {
+	Type                 *VariableType `json:"type,omitempty"`
+	Properties           SchemaMap      `json:"properties,omitempty"`
+	AdditionalProperties interface{}    `json:"additionalProperties,omitempty"` // bool | Schema
+	Required             []string       `json:"required,omitempty"`
+	Items                *Schema        `json:"items,omitempty"`
+	OneOf                []Schema       `json:"oneOf,omitempty"`
+	Enum                 []Value        `json:"enum,omitempty"`
+	Const                VariableValue  `json:"const,omitempty"`
+	Minimum              *float64       `json:"minimum,omitempty"`
+	Maximum              *float64       `json:"maximum,omitempty"`
+	MinLength            *int           `json:"minLength,omitempty"`
+	MaxLength            *int           `json:"maxLength,omitempty"`
+	Pattern              *string        `json:"pattern,omitempty"`
+	MinItems             *int           `json:"minItems,omitempty"`
+	MaxItems             *int           `json:"maxItems,omitempty"`
+	UniqueItems          *bool          `json:"uniqueItems,omitempty"`
+}
+
+// SchemaMap represents schema object properties map.
+type SchemaMap map[string]Schema
+
 // VariableObjectValue represents an object with variable key-value pairs
 type VariableObjectValue map[string]VariableValue
 
@@ -403,7 +432,23 @@ type VariableV1 struct {
 type VariableSchema struct {
 	Deprecated             *bool          `json:"deprecated,omitempty"`
 	Key                    *VariableKey   `json:"key,omitempty"`
-	Type                   VariableType   `json:"type"`
+	Type                   VariableType   `json:"type,omitempty"`
+	Schema                 *SchemaKey     `json:"schema,omitempty"`
+	Properties             SchemaMap      `json:"properties,omitempty"`
+	AdditionalProperties   interface{}    `json:"additionalProperties,omitempty"` // bool | Schema
+	Required               []string       `json:"required,omitempty"`
+	Items                  *Schema        `json:"items,omitempty"`
+	OneOf                  []Schema       `json:"oneOf,omitempty"`
+	Enum                   []Value        `json:"enum,omitempty"`
+	Const                  VariableValue  `json:"const,omitempty"`
+	Minimum                *float64       `json:"minimum,omitempty"`
+	Maximum                *float64       `json:"maximum,omitempty"`
+	MinLength              *int           `json:"minLength,omitempty"`
+	MaxLength              *int           `json:"maxLength,omitempty"`
+	Pattern                *string        `json:"pattern,omitempty"`
+	MinItems               *int           `json:"minItems,omitempty"`
+	MaxItems               *int           `json:"maxItems,omitempty"`
+	UniqueItems            *bool          `json:"uniqueItems,omitempty"`
 	DefaultValue           VariableValue  `json:"defaultValue"`
 	Description            *string        `json:"description,omitempty"`
 	UseDefaultWhenDisabled *bool          `json:"useDefaultWhenDisabled,omitempty"`
