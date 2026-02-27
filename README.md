@@ -317,16 +317,19 @@ import (
 )
 
 f := featurevisor.CreateInstance(featurevisor.Options{
-    Sticky: &StickyFeatures{
-        "myFeatureKey": featurevisor.StickyFeature{
+    Sticky: &featurevisor.StickyFeatures{
+        "myFeatureKey": {
             Enabled: true,
             // optional
-            Variation: &featurevisor.VariationValue{Value: "treatment"},
+            Variation: func() *featurevisor.VariationValue {
+                v := featurevisor.VariationValue("treatment")
+                return &v
+            }(),
             Variables: map[string]interface{}{
                 "myVariableKey": "myVariableValue",
             },
         },
-        "anotherFeatureKey": featurevisor.StickyFeature{
+        "anotherFeatureKey": {
             Enabled: false,
         },
     },
@@ -341,14 +344,17 @@ You can also set sticky features after the SDK is initialized:
 
 ```go
 f.SetSticky(featurevisor.StickyFeatures{
-    "myFeatureKey": featurevisor.StickyFeature{
+    "myFeatureKey": {
         Enabled: true,
-        Variation: &featurevisor.VariationValue{Value: "treatment"},
+        Variation: func() *featurevisor.VariationValue {
+            v := featurevisor.VariationValue("treatment")
+            return &v
+        }(),
         Variables: map[string]interface{}{
             "myVariableKey": "myVariableValue",
         },
     },
-    "anotherFeatureKey": featurevisor.StickyFeature{
+    "anotherFeatureKey": {
         Enabled: false,
     },
 }, true) // replace existing sticky features (false by default)
@@ -494,14 +500,14 @@ You can listen to these events that can occur at various stages in your applicat
 ### `datafile_set`
 
 ```go
-unsubscribe := f.On(featurevisor.EventNameDatafileSet, func(event featurevisor.Event) {
-    revision := event.Revision        // new revision
-    previousRevision := event.PreviousRevision
-    revisionChanged := event.RevisionChanged // true if revision has changed
+unsubscribe := f.On(featurevisor.EventNameDatafileSet, func(details featurevisor.EventDetails) {
+    revision := details["revision"]               // new revision
+    previousRevision := details["previousRevision"]
+    revisionChanged := details["revisionChanged"] // true if revision has changed
 
     // list of feature keys that have new updates,
     // and you should re-evaluate them
-    features := event.Features
+    features := details["features"]
 
     // handle here
 })
@@ -521,9 +527,9 @@ compared to the previous datafile content that existed in the SDK instance.
 ### `context_set`
 
 ```go
-unsubscribe := f.On(featurevisor.EventNameContextSet, func(event featurevisor.Event) {
-    replaced := event.Replaced // true if context was replaced
-    context := event.Context   // the new context
+unsubscribe := f.On(featurevisor.EventNameContextSet, func(details featurevisor.EventDetails) {
+    replaced := details["replaced"] // true if context was replaced
+    context := details["context"]   // the new context
 
     fmt.Println("Context set")
 })
@@ -532,9 +538,9 @@ unsubscribe := f.On(featurevisor.EventNameContextSet, func(event featurevisor.Ev
 ### `sticky_set`
 
 ```go
-unsubscribe := f.On(featurevisor.EventNameStickySet, func(event featurevisor.Event) {
-    replaced := event.Replaced // true if sticky features got replaced
-    features := event.Features // list of all affected feature keys
+unsubscribe := f.On(featurevisor.EventNameStickySet, func(details featurevisor.EventDetails) {
+    replaced := details["replaced"] // true if sticky features got replaced
+    features := details["features"] // list of all affected feature keys
 
     fmt.Println("Sticky features set")
 })
@@ -642,7 +648,8 @@ f := featurevisor.CreateInstance(featurevisor.Options{
 Or after initialization:
 
 ```go
-f.AddHook(myCustomHook)
+removeHook := f.AddHook(myCustomHook)
+removeHook()
 ```
 
 ## Child instance
@@ -680,7 +687,9 @@ Similar to parent SDK, child instances also support several additional methods:
 - `GetVariableInteger`
 - `GetVariableDouble`
 - `GetVariableArray`
+- `GetVariableArrayInto`
 - `GetVariableObject`
+- `GetVariableObjectInto`
 - `GetVariableJSON`
 - `GetAllEvaluations`
 - `On`

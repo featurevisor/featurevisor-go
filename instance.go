@@ -49,7 +49,7 @@ func NewFeaturevisor(options Options) *Featurevisor {
 	if options.Logger != nil {
 		logger = options.Logger
 	} else {
-		level := LogLevelWarn
+		level := LogLevelInfo
 		if options.LogLevel != nil {
 			level = *options.LogLevel
 		}
@@ -174,8 +174,8 @@ func (i *Featurevisor) GetFeature(featureKey string) *Feature {
 }
 
 // AddHook adds a hook
-func (i *Featurevisor) AddHook(hook *Hook) {
-	i.hooksManager.Add(hook)
+func (i *Featurevisor) AddHook(hook *Hook) func() {
+	return i.hooksManager.Add(hook)
 }
 
 // On adds an event listener
