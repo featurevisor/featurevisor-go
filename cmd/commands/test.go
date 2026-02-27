@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -579,28 +580,49 @@ func compareValues(actual, expected interface{}) bool {
 }
 
 // Common functions
-func executeCommand(command string) string {
-	cmd := exec.Command("bash", "-c", command)
-	output, err := cmd.Output()
+const noEnvironmentKey = "__no_environment__"
+
+func executeFeaturevisorCommand(featurevisorProjectPath string, args ...string) (string, error) {
+	cmdArgs := append([]string{"featurevisor"}, args...)
+	cmd := exec.Command("npx", cmdArgs...)
+	cmd.Dir = featurevisorProjectPath
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("command failed: npx %s\n%s", strings.Join(cmdArgs, " "), strings.TrimSpace(string(output)))
 	}
-	return strings.TrimSpace(string(output))
+
+	return strings.TrimSpace(string(output)), nil
+}
+
+func mustExecuteFeaturevisorCommand(featurevisorProjectPath string, args ...string) string {
+	output, err := executeFeaturevisorCommand(featurevisorProjectPath, args...)
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+
+	return output
 }
 
 func getConfig(featurevisorProjectPath string) map[string]interface{} {
 	fmt.Println("Getting config...")
-	configOutput := executeCommand(fmt.Sprintf("(cd %s && npx featurevisor config --json)", featurevisorProjectPath))
+	configOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, "config", "--json")
 	var config map[string]interface{}
-	json.Unmarshal([]byte(configOutput), &config)
+	if err := json.Unmarshal([]byte(configOutput), &config); err != nil {
+		fmt.Printf("failed to parse config json: %v\n", err)
+		os.Exit(1)
+	}
 	return config
 }
 
 func getSegments(featurevisorProjectPath string) map[string]interface{} {
 	fmt.Println("Getting segments...")
-	segmentsOutput := executeCommand(fmt.Sprintf("(cd %s && npx featurevisor list --segments --json)", featurevisorProjectPath))
+	segmentsOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, "list", "--segments", "--json")
 	var segments []map[string]interface{}
-	json.Unmarshal([]byte(segmentsOutput), &segments)
+	if err := json.Unmarshal([]byte(segmentsOutput), &segments); err != nil {
+		fmt.Printf("failed to parse segments json: %v\n", err)
+		os.Exit(1)
+	}
 
 	segmentsByKey := make(map[string]interface{})
 	for _, segment := range segments {
@@ -611,26 +633,207 @@ func getSegments(featurevisorProjectPath string) map[string]interface{} {
 	return segmentsByKey
 }
 
+func buildDatafileJSON(featurevisorProjectPath string, environment *string, schemaVersion string, inflate int, tag *string) interface{} {
+	args := []string{"build"}
+	if environment != nil {
+		args = append(args, fmt.Sprintf("--environment=%s", *environment))
+	}
+	if schemaVersion != "" {
+		args = append(args, fmt.Sprintf("--schema-version=%s", schemaVersion))
+	}
+	if inflate > 0 {
+		args = append(args, fmt.Sprintf("--inflate=%d", inflate))
+	}
+	if tag != nil {
+		args = append(args, fmt.Sprintf("--tag=%s", *tag))
+	}
+	args = append(args, "--json")
+
+	datafileOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, args...)
+	var datafile interface{}
+	if err := json.Unmarshal([]byte(datafileOutput), &datafile); err != nil {
+		fmt.Printf("failed to parse datafile json: %v\n", err)
+		os.Exit(1)
+	}
+
+	return datafile
+}
+
+func ensureDatafilesBuilt(featurevisorProjectPath string, environment *string, schemaVersion string, inflate int) {
+	args := []string{"build"}
+	if environment != nil {
+		args = append(args, fmt.Sprintf("--environment=%s", *environment))
+	}
+	if schemaVersion != "" {
+		args = append(args, fmt.Sprintf("--schema-version=%s", schemaVersion))
+	}
+	if inflate > 0 {
+		args = append(args, fmt.Sprintf("--inflate=%d", inflate))
+	}
+	args = append(args, "--no-state-files")
+
+	_, err := executeFeaturevisorCommand(featurevisorProjectPath, args...)
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+}
+
+func getDatafilesDirectoryPath(featurevisorProjectPath string, config map[string]interface{}) string {
+	datafilesDirectoryPath := "datafiles"
+	if raw, ok := config["datafilesDirectoryPath"].(string); ok && raw != "" {
+		datafilesDirectoryPath = raw
+	}
+
+	if filepath.IsAbs(datafilesDirectoryPath) {
+		return datafilesDirectoryPath
+	}
+
+	return filepath.Join(featurevisorProjectPath, datafilesDirectoryPath)
+}
+
+func getScopedDatafileFromDisk(featurevisorProjectPath string, config map[string]interface{}, environment *string, scopeName string) interface{} {
+	filename := fmt.Sprintf("featurevisor-scope-%s.json", scopeName)
+	datafilesDirectoryPath := getDatafilesDirectoryPath(featurevisorProjectPath, config)
+
+	var fullPath string
+	if environment != nil {
+		fullPath = filepath.Join(datafilesDirectoryPath, *environment, filename)
+	} else {
+		fullPath = filepath.Join(datafilesDirectoryPath, filename)
+	}
+
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		fmt.Printf("failed to read scoped datafile: %s (%v)\n", fullPath, err)
+		os.Exit(1)
+	}
+
+	var datafile interface{}
+	if err := json.Unmarshal(content, &datafile); err != nil {
+		fmt.Printf("failed to parse scoped datafile json: %s (%v)\n", fullPath, err)
+		os.Exit(1)
+	}
+
+	return datafile
+}
+
 func buildDatafiles(featurevisorProjectPath string, environments []string, schemaVersion string, inflate int) map[string]interface{} {
 	datafilesByEnvironment := make(map[string]interface{})
 	for _, environment := range environments {
-		fmt.Printf("Building datafile for environment: %s...\n", environment)
-		command := fmt.Sprintf("(cd %s && npx featurevisor build --environment=%s --json)", featurevisorProjectPath, environment)
-		if schemaVersion != "" {
-			command = fmt.Sprintf("(cd %s && npx featurevisor build --environment=%s --schemaVersion=%s --json)", featurevisorProjectPath, environment, schemaVersion)
-		}
-		if inflate > 0 {
-			command = fmt.Sprintf("(cd %s && npx featurevisor build --environment=%s --inflate=%d --json)", featurevisorProjectPath, environment, inflate)
-			if schemaVersion != "" {
-				command = fmt.Sprintf("(cd %s && npx featurevisor build --environment=%s --schemaVersion=%s --inflate=%d --json)", featurevisorProjectPath, environment, schemaVersion, inflate)
-			}
-		}
-		datafileOutput := executeCommand(command)
-		var datafile interface{}
-		json.Unmarshal([]byte(datafileOutput), &datafile)
-		datafilesByEnvironment[environment] = datafile
+		envCopy := environment
+		datafilesByEnvironment[environment] = buildDatafileJSON(
+			featurevisorProjectPath,
+			&envCopy,
+			schemaVersion,
+			inflate,
+			nil,
+		)
 	}
 	return datafilesByEnvironment
+}
+
+func datafileCacheKey(environment *string) string {
+	if environment == nil {
+		return noEnvironmentKey
+	}
+
+	return *environment
+}
+
+func scopedDatafileCacheKey(environment *string, scope string) string {
+	base := "scope"
+	if environment != nil {
+		base = *environment + "-scope"
+	}
+
+	return fmt.Sprintf("%s-%s", base, scope)
+}
+
+func taggedDatafileCacheKey(environment *string, tag string) string {
+	base := "tag"
+	if environment != nil {
+		base = *environment + "-tag"
+	}
+
+	return fmt.Sprintf("%s-%s", base, tag)
+}
+
+func buildDatafileCache(
+	featurevisorProjectPath string,
+	config map[string]interface{},
+	schemaVersion string,
+	inflate int,
+	withScopes bool,
+	withTags bool,
+) map[string]interface{} {
+	cache := make(map[string]interface{})
+
+	environments := []*string{nil}
+	if envList, ok := config["environments"].([]interface{}); ok {
+		environments = make([]*string, 0, len(envList))
+		for _, raw := range envList {
+			if env, ok := raw.(string); ok {
+				envCopy := env
+				environments = append(environments, &envCopy)
+			}
+		}
+	}
+
+	for _, environment := range environments {
+		baseKey := datafileCacheKey(environment)
+		cache[baseKey] = buildDatafileJSON(featurevisorProjectPath, environment, schemaVersion, inflate, nil)
+
+		if withTags {
+			if tags, ok := config["tags"].([]interface{}); ok {
+				for _, rawTag := range tags {
+					tag, ok := rawTag.(string)
+					if !ok {
+						continue
+					}
+
+					tagCopy := tag
+					cache[taggedDatafileCacheKey(environment, tag)] = buildDatafileJSON(
+						featurevisorProjectPath,
+						environment,
+						schemaVersion,
+						inflate,
+						&tagCopy,
+					)
+				}
+			}
+		}
+
+		if withScopes {
+			scopesRaw, ok := config["scopes"].([]interface{})
+			if !ok || len(scopesRaw) == 0 {
+				continue
+			}
+
+			ensureDatafilesBuilt(featurevisorProjectPath, environment, schemaVersion, inflate)
+
+			for _, rawScope := range scopesRaw {
+				scopeMap, ok := rawScope.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				scopeName, ok := scopeMap["name"].(string)
+				if !ok || scopeName == "" {
+					continue
+				}
+
+				cache[scopedDatafileCacheKey(environment, scopeName)] = getScopedDatafileFromDisk(
+					featurevisorProjectPath,
+					config,
+					environment,
+					scopeName,
+				)
+			}
+		}
+	}
+
+	return cache
 }
 
 func getLoggerLevel(opts CLIOptions) string {
@@ -644,26 +847,102 @@ func getLoggerLevel(opts CLIOptions) string {
 }
 
 func getTests(featurevisorProjectPath string, opts CLIOptions) []map[string]interface{} {
-	testsSuffix := ""
+	args := []string{"list", "--tests", "--applyMatrix", "--json"}
 	if opts.KeyPattern != "" {
-		testsSuffix = fmt.Sprintf(" --keyPattern=%s", opts.KeyPattern)
+		args = append(args, fmt.Sprintf("--keyPattern=%s", opts.KeyPattern))
 	}
 	if opts.AssertionPattern != "" {
-		testsSuffix += fmt.Sprintf(" --assertionPattern=%s", opts.AssertionPattern)
+		args = append(args, fmt.Sprintf("--assertionPattern=%s", opts.AssertionPattern))
 	}
 
-	testsOutput := executeCommand(fmt.Sprintf("(cd %s && npx featurevisor list --tests --applyMatrix --json%s)", featurevisorProjectPath, testsSuffix))
+	testsOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, args...)
 	var tests []map[string]interface{}
-	json.Unmarshal([]byte(testsOutput), &tests)
+	if err := json.Unmarshal([]byte(testsOutput), &tests); err != nil {
+		fmt.Printf("failed to parse tests json: %v\n", err)
+		os.Exit(1)
+	}
 	return tests
+}
+
+func buildInstanceForAssertion(datafile interface{}, level string, assertion map[string]interface{}) *featurevisor.Featurevisor {
+	var datafileContent featurevisor.DatafileContent
+	if datafileBytes, err := json.Marshal(datafile); err == nil {
+		if err := json.Unmarshal(datafileBytes, &datafileContent); err != nil {
+			fmt.Printf("failed to parse datafile for assertion: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Printf("failed to marshal datafile for assertion: %v\n", err)
+		os.Exit(1)
+	}
+
+	levelStr := featurevisor.LogLevel(level)
+	return featurevisor.CreateInstance(featurevisor.Options{
+		Datafile: datafileContent,
+		LogLevel: &levelStr,
+		Hooks: []*featurevisor.Hook{
+			{
+				Name: "tester-hook",
+				BucketValue: func(options featurevisor.ConfigureBucketValueOptions) int {
+					if at, ok := assertion["at"].(float64); ok {
+						return int(at * 1000)
+					}
+					return options.BucketValue
+				},
+			},
+		},
+	})
+}
+
+func toContextMap(value interface{}) map[string]interface{} {
+	if value == nil {
+		return map[string]interface{}{}
+	}
+	if context, ok := value.(map[string]interface{}); ok {
+		return context
+	}
+	return map[string]interface{}{}
+}
+
+func getScopesByName(config map[string]interface{}) map[string]map[string]interface{} {
+	result := map[string]map[string]interface{}{}
+	scopesRaw, ok := config["scopes"].([]interface{})
+	if !ok {
+		return result
+	}
+
+	for _, rawScope := range scopesRaw {
+		scopeMap, ok := rawScope.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		scopeName, ok := scopeMap["name"].(string)
+		if !ok || scopeName == "" {
+			continue
+		}
+
+		scopeContext := toContextMap(scopeMap["context"])
+		result[scopeName] = scopeContext
+	}
+
+	return result
+}
+
+func cloneAssertion(assertion map[string]interface{}) map[string]interface{} {
+	cloned := make(map[string]interface{}, len(assertion))
+	for key, value := range assertion {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func runTest(opts CLIOptions) {
 	featurevisorProjectPath := opts.ProjectDirectoryPath
 
 	config := getConfig(featurevisorProjectPath)
-	environments := config["environments"].([]interface{})
 	segmentsByKey := getSegments(featurevisorProjectPath)
+	scopesByName := getScopesByName(config)
 
 	// Use CLI schemaVersion option or fallback to config
 	schemaVersion := opts.SchemaVersion
@@ -673,7 +952,14 @@ func runTest(opts CLIOptions) {
 		}
 	}
 
-	datafilesByEnvironment := buildDatafiles(featurevisorProjectPath, convertToStringSlice(environments), schemaVersion, opts.Inflate)
+	datafileCache := buildDatafileCache(
+		featurevisorProjectPath,
+		config,
+		schemaVersion,
+		opts.Inflate,
+		opts.WithScopes,
+		opts.WithTags,
+	)
 
 	fmt.Println()
 
@@ -683,38 +969,6 @@ func runTest(opts CLIOptions) {
 	if len(tests) == 0 {
 		fmt.Println("No tests found")
 		return
-	}
-
-	// Create SDK instances for each environment
-	sdkInstancesByEnvironment := make(map[string]*featurevisor.Featurevisor)
-
-	for _, environment := range environments {
-		if envStr, ok := environment.(string); ok {
-			datafile := datafilesByEnvironment[envStr]
-
-			// Convert datafile to proper format
-			var datafileContent featurevisor.DatafileContent
-			if datafileBytes, err := json.Marshal(datafile); err == nil {
-				json.Unmarshal(datafileBytes, &datafileContent)
-			}
-
-			levelStr := featurevisor.LogLevel(level)
-			instance := featurevisor.CreateInstance(featurevisor.Options{
-				Datafile: datafileContent,
-				LogLevel: &levelStr,
-				Hooks: []*featurevisor.Hook{
-					{
-						Name: "tester-hook",
-						BucketValue: func(options featurevisor.ConfigureBucketValueOptions) int {
-							// This will be overridden per assertion if needed
-							return options.BucketValue
-						},
-					},
-				},
-			})
-
-			sdkInstancesByEnvironment[envStr] = instance
-		}
 	}
 
 	passedTestsCount := 0
@@ -734,49 +988,60 @@ func runTest(opts CLIOptions) {
 				var testResult AssertionResult
 
 				if _, hasFeature := test["feature"]; hasFeature {
-					environment := assertionMap["environment"].(string)
-					instance := sdkInstancesByEnvironment[environment]
+					var environment *string
+					if rawEnvironment, exists := assertionMap["environment"]; exists {
+						if env, ok := rawEnvironment.(string); ok {
+							envCopy := env
+							environment = &envCopy
+						}
+					}
+
+					selectedDatafileKey := datafileCacheKey(environment)
+
+					if scopeValue, ok := assertionMap["scope"].(string); ok && scopeValue != "" {
+						if _, exists := datafileCache[scopedDatafileCacheKey(environment, scopeValue)]; exists {
+							selectedDatafileKey = scopedDatafileCacheKey(environment, scopeValue)
+						}
+					}
+
+					if tagValue, ok := assertionMap["tag"].(string); ok && tagValue != "" {
+						if _, exists := datafileCache[taggedDatafileCacheKey(environment, tagValue)]; exists {
+							selectedDatafileKey = taggedDatafileCacheKey(environment, tagValue)
+						}
+					}
+
+					datafile, ok := datafileCache[selectedDatafileKey]
+					if !ok {
+						fmt.Printf("missing datafile for key: %s\n", selectedDatafileKey)
+						os.Exit(1)
+					}
+
+					effectiveAssertion := cloneAssertion(assertionMap)
+					if scopeValue, ok := assertionMap["scope"].(string); ok && scopeValue != "" && !opts.WithScopes {
+						if scopeContext, exists := scopesByName[scopeValue]; exists {
+							mergedContext := map[string]interface{}{}
+							for key, value := range scopeContext {
+								mergedContext[key] = value
+							}
+							for key, value := range toContextMap(assertionMap["context"]) {
+								mergedContext[key] = value
+							}
+							effectiveAssertion["context"] = mergedContext
+						}
+					}
+
+					instance := buildInstanceForAssertion(datafile, level, effectiveAssertion)
 
 					// Show datafile if requested (matching TypeScript implementation)
 					if opts.ShowDatafile {
-						datafile := datafilesByEnvironment[environment]
 						fmt.Println("")
 						datafileJSON, _ := json.MarshalIndent(datafile, "", "  ")
 						fmt.Println(string(datafileJSON))
 						fmt.Println("")
 					}
 
-					// If "at" parameter is provided, create a new instance with the specific hook
-					if _, hasAt := assertionMap["at"]; hasAt {
-						datafile := datafilesByEnvironment[environment]
-						var datafileContent featurevisor.DatafileContent
-						if datafileBytes, err := json.Marshal(datafile); err == nil {
-							json.Unmarshal(datafileBytes, &datafileContent)
-						}
-
-						levelStr := featurevisor.LogLevel(level)
-						instance = featurevisor.CreateInstance(featurevisor.Options{
-							Datafile: datafileContent,
-							LogLevel: &levelStr,
-							Hooks: []*featurevisor.Hook{
-								{
-									Name: "tester-hook",
-									BucketValue: func(options featurevisor.ConfigureBucketValueOptions) int {
-										if at, ok := assertionMap["at"].(float64); ok {
-											// Match JavaScript implementation exactly: assertion.at * (MAX_BUCKETED_NUMBER / 100)
-											// MAX_BUCKETED_NUMBER is 100000, so this gives us 0-100000 range
-											// The JavaScript version uses: assertion.at * (MAX_BUCKETED_NUMBER / 100)
-											// where MAX_BUCKETED_NUMBER = 100000, so this becomes assertion.at * 1000
-											return int(at * 1000)
-										}
-										return options.BucketValue
-									},
-								},
-							},
-						})
-					}
-
-					testResult = RunTestFeature(assertionMap, test["feature"].(string), instance, level)
+					testResult = RunTestFeature(effectiveAssertion, test["feature"].(string), instance, level)
+					instance.Close()
 				} else if _, hasSegment := test["segment"]; hasSegment {
 					segmentKey := test["segment"].(string)
 					segment := segmentsByKey[segmentKey]
@@ -787,13 +1052,17 @@ func runTest(opts CLIOptions) {
 
 				testDuration += testResult.Duration
 
+				description := ""
+				if desc, ok := assertionMap["description"].(string); ok {
+					description = desc
+				}
 				if testResult.HasError {
-					results += fmt.Sprintf("  ✘ %s (%.2fms)\n", assertionMap["description"], testResult.Duration*1000)
+					results += fmt.Sprintf("  ✘ %s (%.2fms)\n", description, testResult.Duration*1000)
 					results += testResult.Errors
 					testHasError = true
 					failedAssertionsCount++
 				} else {
-					results += fmt.Sprintf("  ✔ %s (%.2fms)\n", assertionMap["description"], testResult.Duration*1000)
+					results += fmt.Sprintf("  ✔ %s (%.2fms)\n", description, testResult.Duration*1000)
 					passedAssertionsCount++
 				}
 			}

@@ -1,5 +1,7 @@
 package featurevisor
 
+import "fmt"
+
 // ChildOptions contains options for creating a child instance
 type ChildOptions struct {
 	Parent  *Featurevisor
@@ -12,6 +14,7 @@ type FeaturevisorChild struct {
 	parent  *Featurevisor
 	context Context
 	sticky  *StickyFeatures
+	emitter *Emitter
 }
 
 // NewFeaturevisorChild creates a new child instance
@@ -20,7 +23,22 @@ func NewFeaturevisorChild(options ChildOptions) *FeaturevisorChild {
 		parent:  options.Parent,
 		context: options.Context,
 		sticky:  options.Sticky,
+		emitter: NewEmitter(),
 	}
+}
+
+// On adds an event listener
+func (c *FeaturevisorChild) On(eventName EventName, callback EventCallback) Unsubscribe {
+	if eventName == EventNameContextSet || eventName == EventNameStickySet {
+		return c.emitter.On(eventName, callback)
+	}
+
+	return c.parent.On(eventName, callback)
+}
+
+// Close closes child instance listeners
+func (c *FeaturevisorChild) Close() {
+	c.emitter.ClearAll()
 }
 
 // SetContext sets the context
@@ -38,24 +56,24 @@ func (c *FeaturevisorChild) SetContext(context Context, replace ...bool) {
 			c.context[key] = value
 		}
 	}
+
+	c.emitter.Trigger(EventNameContextSet, EventDetails{
+		"context":  c.context,
+		"replaced": replaceValue,
+	})
 }
 
 // GetContext returns the context
 func (c *FeaturevisorChild) GetContext(context Context) Context {
-	if context == nil {
-		return c.context
-	}
-
-	// Merge contexts
-	result := Context{}
+	merged := Context{}
 	for key, value := range c.context {
-		result[key] = value
+		merged[key] = value
 	}
 	for key, value := range context {
-		result[key] = value
+		merged[key] = value
 	}
 
-	return result
+	return c.parent.GetContext(merged)
 }
 
 // SetSticky sets sticky features
@@ -86,8 +104,7 @@ func (c *FeaturevisorChild) SetSticky(sticky StickyFeatures, replace ...bool) {
 
 	params := getParamsForStickySetEvent(previousStickyFeatures, *c.sticky, replaceValue)
 
-	c.parent.logger.Info("sticky features set", params)
-	c.parent.emitter.Trigger(EventNameStickySet, EventDetails(params))
+	c.emitter.Trigger(EventNameStickySet, EventDetails(params))
 }
 
 // getEvaluationDependencies gets evaluation dependencies
@@ -334,18 +351,7 @@ func (c *FeaturevisorChild) GetVariableArray(featureKey string, variableKey stri
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "array")
-	if arrayValue, ok := typedValue.([]interface{}); ok {
-		result := make([]string, len(arrayValue))
-		for i, item := range arrayValue {
-			if strItem, ok := item.(string); ok {
-				result[i] = strItem
-			}
-		}
-		return result
-	}
-
-	return nil
+	return ToTypedArray[string](GetValueByType(value, "array"))
 }
 
 // GetVariableObject gets an object variable
@@ -355,12 +361,12 @@ func (c *FeaturevisorChild) GetVariableObject(featureKey string, variableKey str
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "object")
-	if objectValue, ok := typedValue.(map[string]interface{}); ok {
-		return objectValue
+	typedValue := ToTypedObject[map[string]interface{}](GetValueByType(value, "object"))
+	if typedValue == nil {
+		return nil
 	}
 
-	return nil
+	return *typedValue
 }
 
 // GetVariableJSON gets a JSON variable
@@ -371,6 +377,48 @@ func (c *FeaturevisorChild) GetVariableJSON(featureKey string, variableKey strin
 	}
 
 	return value
+}
+
+// GetVariableArrayInto decodes an array variable into the provided pointer output.
+// Supported argument order (after featureKey, variableKey): out OR context, out OR context, options, out.
+func (c *FeaturevisorChild) GetVariableArrayInto(featureKey string, variableKey string, args ...interface{}) error {
+	context, options, out, err := parseVariableIntoArgs(args...)
+	if err != nil {
+		return err
+	}
+
+	value := c.GetVariable(featureKey, variableKey, context, options)
+	if value == nil {
+		return decodeInto(nil, out)
+	}
+
+	arrayValue := GetValueByType(value, "array")
+	if arrayValue == nil {
+		return fmt.Errorf("variable %q is not an array", variableKey)
+	}
+
+	return decodeInto(arrayValue, out)
+}
+
+// GetVariableObjectInto decodes an object variable into the provided pointer output.
+// Supported argument order (after featureKey, variableKey): out OR context, out OR context, options, out.
+func (c *FeaturevisorChild) GetVariableObjectInto(featureKey string, variableKey string, args ...interface{}) error {
+	context, options, out, err := parseVariableIntoArgs(args...)
+	if err != nil {
+		return err
+	}
+
+	value := c.GetVariable(featureKey, variableKey, context, options)
+	if value == nil {
+		return decodeInto(nil, out)
+	}
+
+	objectValue := GetValueByType(value, "object")
+	if objectValue == nil {
+		return fmt.Errorf("variable %q is not an object", variableKey)
+	}
+
+	return decodeInto(objectValue, out)
 }
 
 // GetAllEvaluations gets all evaluations for features
