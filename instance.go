@@ -523,18 +523,7 @@ func (i *Featurevisor) GetVariableArray(featureKey string, variableKey string, a
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "array")
-	if arrayValue, ok := typedValue.([]interface{}); ok {
-		result := make([]string, len(arrayValue))
-		for i, item := range arrayValue {
-			if strItem, ok := item.(string); ok {
-				result[i] = strItem
-			}
-		}
-		return result
-	}
-
-	return nil
+	return ToTypedArray[string](GetValueByType(value, "array"))
 }
 
 // GetVariableObject gets an object variable
@@ -544,12 +533,12 @@ func (i *Featurevisor) GetVariableObject(featureKey string, variableKey string, 
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "object")
-	if objectValue, ok := typedValue.(map[string]interface{}); ok {
-		return objectValue
+	typedValue := ToTypedObject[map[string]interface{}](GetValueByType(value, "object"))
+	if typedValue == nil {
+		return nil
 	}
 
-	return nil
+	return *typedValue
 }
 
 // GetVariableJSON gets a JSON variable
@@ -561,6 +550,48 @@ func (i *Featurevisor) GetVariableJSON(featureKey string, variableKey string, ar
 
 	// JSON variables are already parsed in GetVariable
 	return value
+}
+
+// GetVariableArrayInto decodes an array variable into the provided pointer output.
+// Supported argument order (after featureKey, variableKey): out OR context, out OR context, options, out.
+func (i *Featurevisor) GetVariableArrayInto(featureKey string, variableKey string, args ...interface{}) error {
+	context, options, out, err := parseVariableIntoArgs(args...)
+	if err != nil {
+		return err
+	}
+
+	value := i.GetVariable(featureKey, variableKey, context, options)
+	if value == nil {
+		return decodeInto(nil, out)
+	}
+
+	arrayValue := GetValueByType(value, "array")
+	if arrayValue == nil {
+		return fmt.Errorf("variable %q is not an array", variableKey)
+	}
+
+	return decodeInto(arrayValue, out)
+}
+
+// GetVariableObjectInto decodes an object variable into the provided pointer output.
+// Supported argument order (after featureKey, variableKey): out OR context, out OR context, options, out.
+func (i *Featurevisor) GetVariableObjectInto(featureKey string, variableKey string, args ...interface{}) error {
+	context, options, out, err := parseVariableIntoArgs(args...)
+	if err != nil {
+		return err
+	}
+
+	value := i.GetVariable(featureKey, variableKey, context, options)
+	if value == nil {
+		return decodeInto(nil, out)
+	}
+
+	objectValue := GetValueByType(value, "object")
+	if objectValue == nil {
+		return fmt.Errorf("variable %q is not an object", variableKey)
+	}
+
+	return decodeInto(objectValue, out)
 }
 
 // GetAllEvaluations gets all evaluations for features

@@ -267,6 +267,18 @@ f.GetVariableObject(featureKey, variableKey, context)
 f.GetVariableJSON(featureKey, variableKey, context)
 ```
 
+For typed arrays/objects, use `Into` methods with pointer outputs:
+
+```go
+var items []string
+_ = f.GetVariableArrayInto(featureKey, variableKey, context, &items)
+
+var cfg MyConfig
+_ = f.GetVariableObjectInto(featureKey, variableKey, context, &cfg)
+```
+
+`context` and `OverrideOptions` are optional and can be passed before the output pointer.
+
 ## Getting all evaluations
 
 You can get evaluations of all features available in the SDK instance:
