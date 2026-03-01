@@ -778,26 +778,67 @@ func Evaluate(options EvaluateOptions) Evaluation {
 		}
 
 		// override from rule
-		if matchedTraffic != nil && matchedTraffic.Variables != nil {
-			if variableValue, exists := matchedTraffic.Variables[string(*options.VariableKey)]; exists {
-				evaluation = Evaluation{
-					Type:           options.Type,
-					FeatureKey:     options.FeatureKey,
-					Reason:         EvaluationReasonRule,
-					BucketKey:      &bucketKey,
-					BucketValue:    &bucketValue,
-					RuleKey:        &matchedTraffic.Key,
-					Traffic:        matchedTraffic,
-					VariableKey:    options.VariableKey,
-					VariableSchema: variableSchema,
-					VariableValue:  variableValue,
+		if matchedTraffic != nil {
+			if matchedTraffic.VariableOverrides != nil {
+				if overrides, exists := matchedTraffic.VariableOverrides[*options.VariableKey]; exists {
+					for index, override := range overrides {
+						matched := false
+
+						if override.Conditions != nil {
+							parsedConditions := options.DatafileReader.parseConditionsIfStringified(override.Conditions)
+							matched = options.DatafileReader.AllConditionsAreMatched(parsedConditions, options.Context)
+						} else if override.Segments != nil {
+							parsedSegments := options.DatafileReader.parseSegmentsIfStringified(override.Segments)
+							matched = options.DatafileReader.AllSegmentsAreMatched(parsedSegments, options.Context)
+						}
+
+						if matched {
+							overrideIndex := index
+							evaluation = Evaluation{
+								Type:                  options.Type,
+								FeatureKey:            options.FeatureKey,
+								Reason:                EvaluationReasonVariableOverrideRule,
+								BucketKey:             &bucketKey,
+								BucketValue:           &bucketValue,
+								RuleKey:               &matchedTraffic.Key,
+								Traffic:               matchedTraffic,
+								VariableKey:           options.VariableKey,
+								VariableSchema:        variableSchema,
+								VariableValue:         override.Value,
+								VariableOverrideIndex: &overrideIndex,
+							}
+
+							options.Logger.Debug("variable override from rule", LogDetails{
+								"evaluation": evaluation,
+							})
+
+							return evaluation
+						}
+					}
 				}
+			}
 
-				options.Logger.Debug("override from rule", LogDetails{
-					"evaluation": evaluation,
-				})
+			if matchedTraffic.Variables != nil {
+				if variableValue, exists := matchedTraffic.Variables[string(*options.VariableKey)]; exists {
+					evaluation = Evaluation{
+						Type:           options.Type,
+						FeatureKey:     options.FeatureKey,
+						Reason:         EvaluationReasonRule,
+						BucketKey:      &bucketKey,
+						BucketValue:    &bucketValue,
+						RuleKey:        &matchedTraffic.Key,
+						Traffic:        matchedTraffic,
+						VariableKey:    options.VariableKey,
+						VariableSchema: variableSchema,
+						VariableValue:  variableValue,
+					}
 
-				return evaluation
+					options.Logger.Debug("override from rule", LogDetails{
+						"evaluation": evaluation,
+					})
+
+					return evaluation
+				}
 			}
 		}
 
@@ -817,11 +858,12 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				if variation.Value == *variationValue {
 					if variation.VariableOverrides != nil {
 						if overrides, exists := variation.VariableOverrides[*options.VariableKey]; exists {
-							for _, override := range overrides {
+							for index, override := range overrides {
 								matched := false
 
 								if override.Conditions != nil {
-									matched = options.DatafileReader.AllConditionsAreMatched(override.Conditions, options.Context)
+									parsedConditions := options.DatafileReader.parseConditionsIfStringified(override.Conditions)
+									matched = options.DatafileReader.AllConditionsAreMatched(parsedConditions, options.Context)
 								} else if override.Segments != nil {
 									// Parse segments if they come from JSON unmarshaling
 									parsedSegments := options.DatafileReader.parseSegmentsIfStringified(override.Segments)
@@ -829,10 +871,11 @@ func Evaluate(options EvaluateOptions) Evaluation {
 								}
 
 								if matched {
+									overrideIndex := index
 									evaluation = Evaluation{
 										Type:        options.Type,
 										FeatureKey:  options.FeatureKey,
-										Reason:      EvaluationReasonVariableOverride,
+										Reason:      EvaluationReasonVariableOverrideVariation,
 										BucketKey:   &bucketKey,
 										BucketValue: &bucketValue,
 										RuleKey: func() *RuleKey {
@@ -841,13 +884,14 @@ func Evaluate(options EvaluateOptions) Evaluation {
 											}
 											return nil
 										}(),
-										Traffic:        matchedTraffic,
-										VariableKey:    options.VariableKey,
-										VariableSchema: variableSchema,
-										VariableValue:  override.Value,
+										Traffic:               matchedTraffic,
+										VariableKey:           options.VariableKey,
+										VariableSchema:        variableSchema,
+										VariableValue:         override.Value,
+										VariableOverrideIndex: &overrideIndex,
 									}
 
-									options.Logger.Debug("variable override", LogDetails{
+									options.Logger.Debug("variable override from variation", LogDetails{
 										"evaluation": evaluation,
 									})
 

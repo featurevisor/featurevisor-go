@@ -579,6 +579,7 @@ And optionally these properties depending on whether you are evaluating a featur
 - `VariableKey`: the variable key
 - `VariableValue`: the variable value
 - `VariableSchema`: the variable schema
+- `VariableOverrideIndex`: index of matched variable override when applicable
 
 ## Hooks
 
