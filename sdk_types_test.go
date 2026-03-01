@@ -674,3 +674,73 @@ func TestStagingTagCheckoutDatafile(t *testing.T) {
 			datafile.SchemaVersion, datafile2.SchemaVersion)
 	}
 }
+
+func TestTrafficVariableOverridesUnmarshal(t *testing.T) {
+	jsonData := `{
+		"schemaVersion": "2",
+		"revision": "1",
+		"segments": {
+			"germany": {
+				"conditions": "[{\"attribute\":\"country\",\"operator\":\"equals\",\"value\":\"de\"}]"
+			}
+		},
+		"features": {
+			"test": {
+				"bucketBy": "userId",
+				"variablesSchema": {
+					"config": {
+						"type": "object",
+						"defaultValue": {"source":"default"}
+					}
+				},
+				"traffic": [
+					{
+						"key": "germany",
+						"segments": "germany",
+						"percentage": 100000,
+						"variables": {
+							"config": {"source":"rule","nested":{"value":10}}
+						},
+						"variableOverrides": {
+							"config": [
+								{
+									"conditions": "[{\"attribute\":\"country\",\"operator\":\"equals\",\"value\":\"de\"}]",
+									"value": {"source":"rule","nested":{"value":20}}
+								}
+							]
+						}
+					}
+				]
+			}
+		}
+	}`
+
+	var datafile DatafileContent
+	if err := datafile.FromJSON(jsonData); err != nil {
+		t.Fatalf("failed to parse datafile: %v", err)
+	}
+
+	feature := datafile.Features["test"]
+	if len(feature.Traffic) != 1 {
+		t.Fatalf("expected 1 traffic rule, got %d", len(feature.Traffic))
+	}
+
+	traffic := feature.Traffic[0]
+	if traffic.VariableOverrides == nil {
+		t.Fatal("expected traffic variableOverrides to be present")
+	}
+
+	overrides, exists := traffic.VariableOverrides["config"]
+	if !exists || len(overrides) != 1 {
+		t.Fatalf("expected one config override, got %#v", traffic.VariableOverrides)
+	}
+
+	valueMap, ok := overrides[0].Value.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected override value map, got %#v", overrides[0].Value)
+	}
+	nested, ok := valueMap["nested"].(map[string]interface{})
+	if !ok || nested["value"] != float64(20) {
+		t.Fatalf("expected nested override value to be preserved, got %#v", valueMap)
+	}
+}

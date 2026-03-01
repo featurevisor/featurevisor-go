@@ -256,14 +256,15 @@ type RuleKey = string
 
 // Rule represents a rule
 type Rule struct {
-	Key              RuleKey                  `json:"key"`
-	Description      *string                  `json:"description,omitempty"`
-	Segments         interface{}              `json:"segments"` // GroupSegment | GroupSegment[]
-	Percentage       Weight                   `json:"percentage"`
-	Enabled          *bool                    `json:"enabled,omitempty"`
-	Variation        *VariationValue          `json:"variation,omitempty"`
-	Variables        map[string]VariableValue `json:"variables,omitempty"`
-	VariationWeights map[string]Weight        `json:"variationWeights,omitempty"`
+	Key               RuleKey                            `json:"key"`
+	Description       *string                            `json:"description,omitempty"`
+	Segments          interface{}                        `json:"segments"` // GroupSegment | GroupSegment[]
+	Percentage        Weight                             `json:"percentage"`
+	Enabled           *bool                              `json:"enabled,omitempty"`
+	Variation         *VariationValue                    `json:"variation,omitempty"`
+	Variables         map[string]VariableValue           `json:"variables,omitempty"`
+	VariationWeights  map[string]Weight                  `json:"variationWeights,omitempty"`
+	VariableOverrides map[VariableKey][]VariableOverride `json:"variableOverrides,omitempty"`
 }
 
 // RulesByEnvironment represents rules by environment
@@ -339,14 +340,15 @@ type Allocation struct {
 
 // Traffic represents traffic configuration
 type Traffic struct {
-	Key              RuleKey                  `json:"key"`
-	Segments         interface{}              `json:"segments"` // GroupSegment | GroupSegment[] | "*"
-	Percentage       Percentage               `json:"percentage"`
-	Enabled          *bool                    `json:"enabled,omitempty"`
-	Variation        *VariationValue          `json:"variation,omitempty"`
-	Variables        map[string]VariableValue `json:"variables,omitempty"`
-	VariationWeights map[string]Weight        `json:"variationWeights,omitempty"`
-	Allocation       []Allocation             `json:"allocation,omitempty"`
+	Key               RuleKey                            `json:"key"`
+	Segments          interface{}                        `json:"segments"` // GroupSegment | GroupSegment[] | "*"
+	Percentage        Percentage                         `json:"percentage"`
+	Enabled           *bool                              `json:"enabled,omitempty"`
+	Variation         *VariationValue                    `json:"variation,omitempty"`
+	Variables         map[string]VariableValue           `json:"variables,omitempty"`
+	VariationWeights  map[string]Weight                  `json:"variationWeights,omitempty"`
+	VariableOverrides map[VariableKey][]VariableOverride `json:"variableOverrides,omitempty"`
+	Allocation        []Allocation                       `json:"allocation,omitempty"`
 }
 
 /**
@@ -380,21 +382,21 @@ type SchemaKey = string
 // Schema represents JSON schema-like validations used by variable schema.
 type Schema struct {
 	Type                 *VariableType `json:"type,omitempty"`
-	Properties           SchemaMap      `json:"properties,omitempty"`
-	AdditionalProperties interface{}    `json:"additionalProperties,omitempty"` // bool | Schema
-	Required             []string       `json:"required,omitempty"`
-	Items                *Schema        `json:"items,omitempty"`
-	OneOf                []Schema       `json:"oneOf,omitempty"`
-	Enum                 []Value        `json:"enum,omitempty"`
-	Const                VariableValue  `json:"const,omitempty"`
-	Minimum              *float64       `json:"minimum,omitempty"`
-	Maximum              *float64       `json:"maximum,omitempty"`
-	MinLength            *int           `json:"minLength,omitempty"`
-	MaxLength            *int           `json:"maxLength,omitempty"`
-	Pattern              *string        `json:"pattern,omitempty"`
-	MinItems             *int           `json:"minItems,omitempty"`
-	MaxItems             *int           `json:"maxItems,omitempty"`
-	UniqueItems          *bool          `json:"uniqueItems,omitempty"`
+	Properties           SchemaMap     `json:"properties,omitempty"`
+	AdditionalProperties interface{}   `json:"additionalProperties,omitempty"` // bool | Schema
+	Required             []string      `json:"required,omitempty"`
+	Items                *Schema       `json:"items,omitempty"`
+	OneOf                []Schema      `json:"oneOf,omitempty"`
+	Enum                 []Value       `json:"enum,omitempty"`
+	Const                VariableValue `json:"const,omitempty"`
+	Minimum              *float64      `json:"minimum,omitempty"`
+	Maximum              *float64      `json:"maximum,omitempty"`
+	MinLength            *int          `json:"minLength,omitempty"`
+	MaxLength            *int          `json:"maxLength,omitempty"`
+	Pattern              *string       `json:"pattern,omitempty"`
+	MinItems             *int          `json:"minItems,omitempty"`
+	MaxItems             *int          `json:"maxItems,omitempty"`
+	UniqueItems          *bool         `json:"uniqueItems,omitempty"`
 }
 
 // SchemaMap represents schema object properties map.

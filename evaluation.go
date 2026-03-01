@@ -15,10 +15,11 @@ const (
 	EvaluationReasonVariationDisabled EvaluationReason = "variation_disabled" // feature is disabled, and variation's disabledVariationValue is used
 
 	// Variable specific
-	EvaluationReasonVariableNotFound EvaluationReason = "variable_not_found" // variable's schema is not defined in the feature
-	EvaluationReasonVariableDefault  EvaluationReason = "variable_default"   // default variable value used
-	EvaluationReasonVariableDisabled EvaluationReason = "variable_disabled"  // feature is disabled, and variable's disabledValue is used
-	EvaluationReasonVariableOverride EvaluationReason = "variable_override"  // variable overridden from inside a variation
+	EvaluationReasonVariableNotFound          EvaluationReason = "variable_not_found"          // variable's schema is not defined in the feature
+	EvaluationReasonVariableDefault           EvaluationReason = "variable_default"            // default variable value used
+	EvaluationReasonVariableDisabled          EvaluationReason = "variable_disabled"           // feature is disabled, and variable's disabledValue is used
+	EvaluationReasonVariableOverrideVariation EvaluationReason = "variable_override_variation" // variable overridden from inside a variation
+	EvaluationReasonVariableOverrideRule      EvaluationReason = "variable_override_rule"      // variable overridden from inside a rule
 
 	// Common
 	EvaluationReasonNoMatch   EvaluationReason = "no_match"  // no rules matched
@@ -63,7 +64,8 @@ type Evaluation struct {
 	VariationValue *VariationValue `json:"variationValue,omitempty"`
 
 	// Variable
-	VariableKey    *VariableKey    `json:"variableKey,omitempty"`
-	VariableValue  VariableValue   `json:"variableValue,omitempty"`
-	VariableSchema *VariableSchema `json:"variableSchema,omitempty"`
+	VariableKey           *VariableKey    `json:"variableKey,omitempty"`
+	VariableValue         VariableValue   `json:"variableValue,omitempty"`
+	VariableSchema        *VariableSchema `json:"variableSchema,omitempty"`
+	VariableOverrideIndex *int            `json:"variableOverrideIndex,omitempty"`
 }

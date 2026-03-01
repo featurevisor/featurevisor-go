@@ -460,6 +460,11 @@ func getEvaluationValue(evaluation featurevisor.Evaluation, key string) interfac
 		return evaluation.VariableValue
 	case "variableSchema":
 		return evaluation.VariableSchema
+	case "variableOverrideIndex":
+		if evaluation.VariableOverrideIndex != nil {
+			return *evaluation.VariableOverrideIndex
+		}
+		return nil
 	default:
 		return nil
 	}
