@@ -80,7 +80,7 @@ func TestPlainBucketBy(t *testing.T) {
 
 	instance := CreateInstance(Options{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				BucketKey: func(options ConfigureBucketKeyOptions) string {
@@ -144,7 +144,7 @@ func TestAndBucketBy(t *testing.T) {
 
 	instance := CreateInstance(Options{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				BucketKey: func(options ConfigureBucketKeyOptions) string {
@@ -209,7 +209,7 @@ func TestOrBucketBy(t *testing.T) {
 
 	instance := CreateInstance(Options{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				BucketKey: func(options ConfigureBucketKeyOptions) string {
@@ -251,7 +251,7 @@ func TestOrBucketBy(t *testing.T) {
 	}
 }
 
-func TestBeforeHook(t *testing.T) {
+func TestBeforeModule(t *testing.T) {
 	var intercepted bool
 	var interceptedFeatureKey string
 	var interceptedVariableKey string
@@ -290,7 +290,7 @@ func TestBeforeHook(t *testing.T) {
 
 	instance := CreateInstance(Options{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				Before: func(options EvaluateOptions) EvaluateOptions {
@@ -313,7 +313,7 @@ func TestBeforeHook(t *testing.T) {
 	}
 
 	if !intercepted {
-		t.Error("Expected before hook to be called")
+		t.Error("Expected before module to be called")
 	}
 
 	if interceptedFeatureKey != "test" {
@@ -325,7 +325,7 @@ func TestBeforeHook(t *testing.T) {
 	}
 }
 
-func TestAfterHook(t *testing.T) {
+func TestAfterModule(t *testing.T) {
 	var intercepted bool
 	var interceptedFeatureKey string
 	var interceptedVariableKey string
@@ -364,7 +364,7 @@ func TestAfterHook(t *testing.T) {
 
 	instance := CreateInstance(Options{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				After: func(evaluation Evaluation, options EvaluateOptions) Evaluation {
@@ -390,7 +390,7 @@ func TestAfterHook(t *testing.T) {
 	}
 
 	if !intercepted {
-		t.Error("Expected after hook to be called")
+		t.Error("Expected after module to be called")
 	}
 
 	if interceptedFeatureKey != "test" {
@@ -405,6 +405,135 @@ func TestAfterHook(t *testing.T) {
 // Helper function to create string pointers
 func stringPtr(s string) *string {
 	return &s
+}
+
+func TestModulesSetupDiagnosticsAndClose(t *testing.T) {
+	var setupCalled bool
+	var closeCalled bool
+	var setupRevision string
+	var moduleSawDatafileSet bool
+	var diagnostics []FeaturevisorDiagnostic
+
+	instance := CreateInstance(Options{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "module-test",
+			Segments:      map[SegmentKey]Segment{},
+			Features:      map[FeatureKey]Feature{},
+		},
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+		Modules: []*FeaturevisorModule{
+			{
+				Name: "observer",
+				Setup: func(api FeaturevisorModuleApi) {
+					setupCalled = true
+					setupRevision = api.GetRevision()
+					api.OnDiagnostic(func(diagnostic FeaturevisorDiagnostic) {
+						if diagnostic.Code == "datafile_set" {
+							moduleSawDatafileSet = true
+						}
+					})
+					api.ReportDiagnostic(FeaturevisorModuleReportedDiagnostic{
+						Level:   LogLevelInfo,
+						Code:    "module_ready",
+						Message: "Module ready",
+					})
+				},
+				Close: func() {
+					closeCalled = true
+				},
+			},
+		},
+	})
+
+	if !setupCalled {
+		t.Fatal("expected module setup to be called")
+	}
+	if setupRevision != "unknown" {
+		t.Fatalf("expected setup API revision to be unknown before initial datafile is set, got %s", setupRevision)
+	}
+	if !moduleSawDatafileSet {
+		t.Fatal("expected module diagnostic subscription to observe initial datafile_set")
+	}
+
+	foundModuleDiagnostic := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "module_ready" && diagnostic.Module == "observer" {
+			foundModuleDiagnostic = true
+			break
+		}
+	}
+	if !foundModuleDiagnostic {
+		t.Fatal("expected module reported diagnostic")
+	}
+
+	instance.AddModule(&FeaturevisorModule{Name: "observer"})
+
+	foundDuplicateDiagnostic := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "duplicate_module" && diagnostic.Level == LogLevelError {
+			foundDuplicateDiagnostic = true
+			break
+		}
+	}
+
+	if !foundDuplicateDiagnostic {
+		t.Fatal("expected duplicate module diagnostic")
+	}
+
+	instance.Close()
+
+	if !closeCalled {
+		t.Fatal("expected module close to be called")
+	}
+}
+
+func TestSetDatafileMergesByDefaultAndReplacesWhenRequested(t *testing.T) {
+	instance := CreateInstance(Options{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "1",
+			Segments:      map[SegmentKey]Segment{},
+			Features: map[FeatureKey]Feature{
+				"first": {
+					BucketBy: "userId",
+					Traffic:  []Traffic{},
+				},
+			},
+		},
+	})
+
+	secondDatafile := DatafileContent{
+		SchemaVersion: "2",
+		Revision:      "2",
+		Segments:      map[SegmentKey]Segment{},
+		Features: map[FeatureKey]Feature{
+			"second": {
+				BucketBy: "userId",
+				Traffic:  []Traffic{},
+			},
+		},
+	}
+
+	instance.SetDatafile(secondDatafile)
+
+	if instance.GetFeature("first") == nil {
+		t.Fatal("expected default SetDatafile to preserve existing features")
+	}
+	if instance.GetFeature("second") == nil {
+		t.Fatal("expected default SetDatafile to add incoming features")
+	}
+
+	instance.SetDatafile(secondDatafile, true)
+
+	if instance.GetFeature("first") != nil {
+		t.Fatal("expected replace SetDatafile to remove existing features")
+	}
+	if instance.GetFeature("second") == nil {
+		t.Fatal("expected replace SetDatafile to keep incoming features")
+	}
 }
 
 func TestGetAllEvaluations(t *testing.T) {

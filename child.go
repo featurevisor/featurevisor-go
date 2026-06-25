@@ -131,7 +131,7 @@ func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options O
 	return EvaluateDependencies{
 		Context:               c.GetContext(context),
 		Logger:                c.parent.logger,
-		HooksManager:          c.parent.hooksManager,
+		ModulesManager:        c.parent.modulesManager,
 		DatafileReader:        c.parent.datafileReader,
 		Sticky:                sticky,
 		DefaultVariationValue: options.DefaultVariationValue,
@@ -141,7 +141,7 @@ func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options O
 
 // EvaluateFlag evaluates a feature flag
 func (c *FeaturevisorChild) EvaluateFlag(featureKey string, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithHooks(EvaluateOptions{
+	return EvaluateWithModules(EvaluateOptions{
 		EvaluateParams: EvaluateParams{
 			Type:       EvaluationTypeFlag,
 			FeatureKey: FeatureKey(featureKey),
@@ -186,7 +186,7 @@ func (c *FeaturevisorChild) IsEnabled(featureKey string, args ...interface{}) bo
 
 // EvaluateVariation evaluates a feature variation
 func (c *FeaturevisorChild) EvaluateVariation(featureKey string, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithHooks(EvaluateOptions{
+	return EvaluateWithModules(EvaluateOptions{
 		EvaluateParams: EvaluateParams{
 			Type:       EvaluationTypeVariation,
 			FeatureKey: FeatureKey(featureKey),
@@ -239,7 +239,7 @@ func (c *FeaturevisorChild) GetVariation(featureKey string, args ...interface{})
 
 // EvaluateVariable evaluates a feature variable
 func (c *FeaturevisorChild) EvaluateVariable(featureKey string, variableKey VariableKey, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithHooks(EvaluateOptions{
+	return EvaluateWithModules(EvaluateOptions{
 		EvaluateParams: EvaluateParams{
 			Type:        EvaluationTypeVariable,
 			FeatureKey:  FeatureKey(featureKey),

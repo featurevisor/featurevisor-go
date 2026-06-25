@@ -106,7 +106,7 @@ func runAssessDistribution(opts CLIOptions) {
 
 	levelStr := getLoggerLevel(opts)
 	level := featurevisor.LogLevel(levelStr)
-	datafilesByEnvironment := buildDatafiles(featurevisorProjectPath, []string{opts.Environment}, "", 0)
+	datafilesByEnvironment := buildDatafiles(featurevisorProjectPath, []string{opts.Environment}, 0)
 
 	// Create SDK instance
 	datafile := datafilesByEnvironment[opts.Environment]

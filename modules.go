@@ -1,0 +1,167 @@
+package featurevisor
+
+// ConfigureBucketKeyOptions contains options for configuring bucket key
+type ConfigureBucketKeyOptions struct {
+	FeatureKey FeatureKey `json:"featureKey"`
+	Context    Context    `json:"context"`
+	BucketBy   BucketBy   `json:"bucketBy"`
+	BucketKey  string     `json:"bucketKey"` // the initial bucket key, which can be modified by modules
+}
+
+// ConfigureBucketKey is a function type for configuring bucket key
+type ConfigureBucketKey func(options ConfigureBucketKeyOptions) BucketKey
+
+// ConfigureBucketValueOptions contains options for configuring bucket value
+type ConfigureBucketValueOptions struct {
+	FeatureKey  FeatureKey `json:"featureKey"`
+	BucketKey   string     `json:"bucketKey"`
+	Context     Context    `json:"context"`
+	BucketValue int        `json:"bucketValue"` // the initial bucket value, which can be modified by modules
+}
+
+// ConfigureBucketValue is a function type for configuring bucket value
+type ConfigureBucketValue func(options ConfigureBucketValueOptions) BucketValue
+
+// FeaturevisorModuleApi is passed to modules during setup.
+type FeaturevisorModuleApi struct {
+	GetRevision      func() string
+	OnDiagnostic     func(handler FeaturevisorDiagnosticHandler, options ...FeaturevisorModuleDiagnosticOptions) FeaturevisorUnsubscribe
+	ReportDiagnostic func(diagnostic FeaturevisorModuleReportedDiagnostic)
+}
+
+// FeaturevisorModule represents a module that can participate in evaluation lifecycle.
+type FeaturevisorModule struct {
+	Name string `json:"name,omitempty"`
+
+	Setup       func(api FeaturevisorModuleApi)                                 `json:"setup,omitempty"`
+	Before      func(options EvaluateOptions) EvaluateOptions                   `json:"before,omitempty"`
+	BucketKey   ConfigureBucketKey                                              `json:"bucketKey,omitempty"`
+	BucketValue ConfigureBucketValue                                            `json:"bucketValue,omitempty"`
+	After       func(evaluation Evaluation, options EvaluateOptions) Evaluation `json:"after,omitempty"`
+	Close       func()                                                          `json:"close,omitempty"`
+}
+
+// ModulesManagerOptions contains options for creating a modules manager.
+type ModulesManagerOptions struct {
+	Modules                            []*FeaturevisorModule
+	ReportDiagnostic                   FeaturevisorDiagnosticReporter
+	GetModuleApi                       func(module *FeaturevisorModule) FeaturevisorModuleApi
+	ClearModuleDiagnosticSubscriptions func(module *FeaturevisorModule)
+}
+
+// ModulesManager manages Featurevisor modules.
+type ModulesManager struct {
+	modules                            []*FeaturevisorModule
+	reportDiagnostic                   FeaturevisorDiagnosticReporter
+	getModuleApi                       func(module *FeaturevisorModule) FeaturevisorModuleApi
+	clearModuleDiagnosticSubscriptions func(module *FeaturevisorModule)
+}
+
+// NewModulesManager creates a new modules manager instance.
+func NewModulesManager(options ModulesManagerOptions) *ModulesManager {
+	mm := &ModulesManager{
+		modules:                            make([]*FeaturevisorModule, 0),
+		reportDiagnostic:                   options.ReportDiagnostic,
+		getModuleApi:                       options.GetModuleApi,
+		clearModuleDiagnosticSubscriptions: options.ClearModuleDiagnosticSubscriptions,
+	}
+
+	if options.Modules != nil {
+		for _, module := range options.Modules {
+			mm.Add(module)
+		}
+	}
+
+	return mm
+}
+
+// Add adds a module to the modules manager.
+func (mm *ModulesManager) Add(module *FeaturevisorModule) FeaturevisorUnsubscribe {
+	if module == nil {
+		return nil
+	}
+
+	if module.Name != "" {
+		for _, existingModule := range mm.modules {
+			if existingModule.Name == module.Name {
+				mm.reportDiagnostic(FeaturevisorDiagnostic{
+					Level:      LogLevelError,
+					Code:       "duplicate_module",
+					Message:    "Duplicate module name",
+					ModuleName: module.Name,
+				}, nil)
+				return nil
+			}
+		}
+	}
+
+	if module.Setup != nil && mm.getModuleApi != nil {
+		module.Setup(mm.getModuleApi(module))
+	}
+
+	mm.modules = append(mm.modules, module)
+
+	return func() {
+		mm.modules = filterModules(mm.modules, func(existingModule *FeaturevisorModule) bool {
+			return existingModule != module
+		})
+		if mm.clearModuleDiagnosticSubscriptions != nil {
+			mm.clearModuleDiagnosticSubscriptions(module)
+		}
+	}
+}
+
+// Remove removes modules by name.
+func (mm *ModulesManager) Remove(name string) {
+	removedModules := []*FeaturevisorModule{}
+	keptModules := []*FeaturevisorModule{}
+
+	for _, module := range mm.modules {
+		if module.Name == name {
+			removedModules = append(removedModules, module)
+		} else {
+			keptModules = append(keptModules, module)
+		}
+	}
+
+	mm.modules = keptModules
+
+	if mm.clearModuleDiagnosticSubscriptions != nil {
+		for _, module := range removedModules {
+			mm.clearModuleDiagnosticSubscriptions(module)
+		}
+	}
+}
+
+// GetAll returns all modules.
+func (mm *ModulesManager) GetAll() []*FeaturevisorModule {
+	return mm.modules
+}
+
+// CloseAll closes and removes all modules.
+func (mm *ModulesManager) CloseAll() {
+	modules := append([]*FeaturevisorModule{}, mm.modules...)
+	mm.modules = []*FeaturevisorModule{}
+
+	for _, module := range modules {
+		if mm.clearModuleDiagnosticSubscriptions != nil {
+			mm.clearModuleDiagnosticSubscriptions(module)
+		}
+		if module.Close != nil {
+			module.Close()
+		}
+	}
+}
+
+func filterModules(
+	modules []*FeaturevisorModule,
+	keep func(module *FeaturevisorModule) bool,
+) []*FeaturevisorModule {
+	result := []*FeaturevisorModule{}
+	for _, module := range modules {
+		if keep(module) {
+			result = append(result, module)
+		}
+	}
+	return result
+}

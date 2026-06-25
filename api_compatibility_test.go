@@ -671,9 +671,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"country":  "nl",
 				"deviceId": "test-device-123",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 60000 (60%) to get treatment variation
 						return 60000
@@ -718,9 +718,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"country":  "ch",
 				"deviceId": "test-device-ch",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 60000 (60%) to get treatment variation
 						return 60000
@@ -741,9 +741,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"country":  "de",
 				"deviceId": "test-device-de",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 40000 (40%) to get control variation
 						return 40000
@@ -768,9 +768,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"country": "us",
 				"userId":  "test-user-15",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 15000 (15%) to get control variation
 						return 15000
@@ -808,9 +808,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"country": "de",
 				"userId":  "test-user-de",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 20000 (20%) to get variation 'b'
 						return 20000
@@ -836,9 +836,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"device":  "mobile",
 				"userId":  "test-user-foo",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 60000 (60%) to get treatment variation
 						return 60000
@@ -911,9 +911,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"country": "nl",
 				"userId":  "test-user-nl",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 90000 (90%) to get treatment variation
 						return 90000
@@ -964,9 +964,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"country": "de",
 				"userId":  "test-user-de",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 90000 (90%) to get treatment variation
 						return 90000
@@ -996,9 +996,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"country": "nl",
 				"userId":  "test-user-qux",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 70000 (70%) to get variation 'b'
 						return 70000
@@ -1031,9 +1031,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				"country": "de",
 				"userId":  "test-user-qux-de",
 			},
-			Hooks: []*Hook{
+			Modules: []*FeaturevisorModule{
 				{
-					Name: "test-hook",
+					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
 						// Force bucket value to 70000 (70%) to get variation 'b'
 						return 70000

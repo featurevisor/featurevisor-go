@@ -155,7 +155,7 @@ func runBenchmark(opts CLIOptions) {
 
 	fmt.Printf("Building datafile containing all features for \"%s\"...\n", opts.Environment)
 	datafileBuildStart := time.Now()
-	datafilesByEnvironment := buildDatafiles(featurevisorProjectPath, []string{opts.Environment}, "", 0)
+	datafilesByEnvironment := buildDatafiles(featurevisorProjectPath, []string{opts.Environment}, 0)
 	datafileBuildDuration := time.Since(datafileBuildStart)
 	// Convert to milliseconds to match TypeScript behavior
 	datafileBuildDurationMs := datafileBuildDuration.Milliseconds()

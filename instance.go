@@ -15,25 +15,39 @@ type OverrideOptions struct {
 
 // Options contains options for creating an instance
 type Options struct {
-	Datafile interface{} // DatafileContent | string
-	Context  Context
-	LogLevel *LogLevel
-	Logger   *Logger
-	Sticky   *StickyFeatures
-	Hooks    []*Hook
+	Datafile     interface{} // DatafileContent | string
+	Context      Context
+	LogLevel     *LogLevel
+	Logger       *Logger
+	OnDiagnostic FeaturevisorDiagnosticHandler
+	Sticky       *StickyFeatures
+	Modules      []*FeaturevisorModule
+}
+
+type moduleDiagnosticSubscription struct {
+	id       int
+	module   *FeaturevisorModule
+	handler  FeaturevisorDiagnosticHandler
+	logLevel LogLevel
 }
 
 // Featurevisor represents a Featurevisor SDK instance
 type Featurevisor struct {
 	// from options
-	context Context
-	logger  *Logger
-	sticky  *StickyFeatures
+	context      Context
+	logger       *Logger
+	logLevel     LogLevel
+	onDiagnostic FeaturevisorDiagnosticHandler
+	sticky       *StickyFeatures
 
 	// internally created
-	datafileReader *DatafileReader
-	hooksManager   *HooksManager
-	emitter        *Emitter
+	datafile                      DatafileContent
+	datafileReader                *DatafileReader
+	modulesManager                *ModulesManager
+	moduleDiagnosticSubscriptions []moduleDiagnosticSubscription
+	nextModuleDiagnosticID        int
+	emitter                       *Emitter
+	closed                        bool
 }
 
 // NewFeaturevisor creates a new Featurevisor instance
@@ -56,16 +70,9 @@ func NewFeaturevisor(options Options) *Featurevisor {
 		logger = NewLogger(CreateLoggerOptions{Level: &level})
 	}
 
-	// Create hooks manager
-	hooksManager := NewHooksManager(HooksManagerOptions{
-		Logger: logger,
-		Hooks:  options.Hooks,
-	})
-
 	// Create emitter
 	emitter := NewEmitter()
 
-	// Create datafile reader
 	emptyDatafile := DatafileContent{
 		SchemaVersion: "2",
 		Revision:      "unknown",
@@ -78,61 +85,95 @@ func NewFeaturevisor(options Options) *Featurevisor {
 		Logger:   logger,
 	})
 
-	// If datafile is provided, set it
-	if options.Datafile != nil {
-		datafileContent, err := parseDatafileInput(options.Datafile)
-		if err != nil {
-			logger.Error("could not parse datafile", LogDetails{"error": err})
-		} else {
-			datafileReader = NewDatafileReader(DatafileReaderOptions{
-				Datafile: datafileContent,
-				Logger:   logger,
-			})
-		}
-	}
-
 	instance := &Featurevisor{
 		context:        context,
 		logger:         logger,
-		hooksManager:   hooksManager,
+		logLevel:       logger.GetLevel(),
+		onDiagnostic:   options.OnDiagnostic,
 		emitter:        emitter,
+		datafile:       emptyDatafile,
 		datafileReader: datafileReader,
 		sticky:         options.Sticky,
 	}
 
-	logger.Info("Featurevisor SDK initialized", LogDetails{})
+	instance.modulesManager = NewModulesManager(ModulesManagerOptions{
+		Modules:                            options.Modules,
+		ReportDiagnostic:                   instance.reportDiagnostic,
+		GetModuleApi:                       instance.getModuleApi,
+		ClearModuleDiagnosticSubscriptions: instance.clearModuleDiagnosticSubscriptions,
+	})
+
+	if options.Datafile != nil {
+		instance.SetDatafile(options.Datafile, true)
+	}
+
+	instance.reportDiagnostic(FeaturevisorDiagnostic{
+		Level:   LogLevelInfo,
+		Code:    "sdk_initialized",
+		Message: "SDK initialized",
+	}, nil)
 
 	return instance
 }
 
 // SetLogLevel sets the log level
 func (i *Featurevisor) SetLogLevel(level LogLevel) {
+	i.logLevel = level
 	i.logger.SetLevel(level)
 }
 
 // SetDatafile sets the datafile
-func (i *Featurevisor) SetDatafile(datafile interface{}) {
-	datafileContent, err := parseDatafileInput(datafile)
-	if err != nil {
-		i.logger.Error("could not parse datafile", LogDetails{"error": err})
+func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
+	if i.closed {
 		return
 	}
 
+	replaceValue := false
+	if len(replace) > 0 {
+		replaceValue = replace[0]
+	}
+
+	datafileContent, err := parseDatafileInput(datafile)
+	if err != nil {
+		i.reportDiagnostic(FeaturevisorDiagnostic{
+			Level:         LogLevelError,
+			Code:          "invalid_datafile",
+			Message:       "Could not parse datafile",
+			OriginalError: err,
+		}, nil)
+		return
+	}
+
+	storedDatafile := datafileContent
+	if !replaceValue {
+		storedDatafile = mergeStoredDatafile(i.datafile, datafileContent)
+	}
+
 	newDatafileReader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafileContent,
+		Datafile: storedDatafile,
 		Logger:   i.logger,
 	})
 
-	details := getParamsForDatafileSetEvent(i.datafileReader, newDatafileReader)
+	details := getParamsForDatafileSetEvent(i.datafileReader, newDatafileReader, replaceValue)
 
+	i.datafile = storedDatafile
 	i.datafileReader = newDatafileReader
 
-	i.logger.Info("datafile set", details)
+	i.reportDiagnostic(FeaturevisorDiagnostic{
+		Level:   LogLevelInfo,
+		Code:    "datafile_set",
+		Message: "Datafile set",
+		Details: details,
+	}, nil)
 	i.emitter.Trigger(EventNameDatafileSet, EventDetails(details))
 }
 
 // SetSticky sets sticky features
 func (i *Featurevisor) SetSticky(sticky StickyFeatures, replace ...bool) {
+	if i.closed {
+		return
+	}
+
 	replaceValue := false
 	if len(replace) > 0 {
 		replaceValue = replace[0]
@@ -159,7 +200,12 @@ func (i *Featurevisor) SetSticky(sticky StickyFeatures, replace ...bool) {
 
 	params := getParamsForStickySetEvent(previousStickyFeatures, *i.sticky, replaceValue)
 
-	i.logger.Info("sticky features set", params)
+	i.reportDiagnostic(FeaturevisorDiagnostic{
+		Level:   LogLevelInfo,
+		Code:    "sticky_set",
+		Message: "Sticky features set",
+		Details: params,
+	}, nil)
 	i.emitter.Trigger(EventNameStickySet, EventDetails(params))
 }
 
@@ -173,23 +219,150 @@ func (i *Featurevisor) GetFeature(featureKey string) *Feature {
 	return i.datafileReader.GetFeature(FeatureKey(featureKey))
 }
 
-// AddHook adds a hook
-func (i *Featurevisor) AddHook(hook *Hook) func() {
-	return i.hooksManager.Add(hook)
+// AddModule adds a module.
+func (i *Featurevisor) AddModule(module *FeaturevisorModule) FeaturevisorUnsubscribe {
+	if i.closed {
+		return nil
+	}
+
+	return i.modulesManager.Add(module)
+}
+
+// RemoveModule removes modules by name.
+func (i *Featurevisor) RemoveModule(name string) {
+	if i.closed {
+		return
+	}
+
+	i.modulesManager.Remove(name)
 }
 
 // On adds an event listener
 func (i *Featurevisor) On(eventName EventName, callback EventCallback) Unsubscribe {
+	if i.closed {
+		return func() {}
+	}
+
 	return i.emitter.On(eventName, callback)
 }
 
 // Close closes the instance
 func (i *Featurevisor) Close() {
+	if i.closed {
+		return
+	}
+
+	i.closed = true
+	i.modulesManager.CloseAll()
+	i.moduleDiagnosticSubscriptions = nil
 	i.emitter.ClearAll()
+}
+
+func (i *Featurevisor) reportDiagnostic(
+	diagnostic FeaturevisorDiagnostic,
+	sourceModule *FeaturevisorModule,
+) {
+	for _, subscription := range append([]moduleDiagnosticSubscription{}, i.moduleDiagnosticSubscriptions...) {
+		if subscription.module == sourceModule {
+			continue
+		}
+		if !shouldLogDiagnostic(subscription.logLevel, diagnostic.Level) {
+			continue
+		}
+		subscription.handler(diagnostic)
+	}
+
+	if shouldLogDiagnostic(i.logLevel, diagnostic.Level) {
+		if i.onDiagnostic != nil {
+			i.onDiagnostic(diagnostic)
+		} else {
+			details := LogDetails{}
+			if diagnostic.Details != nil {
+				for key, value := range diagnostic.Details {
+					details[key] = value
+				}
+			}
+			if diagnostic.Code != "" {
+				details["code"] = diagnostic.Code
+			}
+			if diagnostic.Module != "" {
+				details["module"] = diagnostic.Module
+			}
+			if diagnostic.ModuleName != "" {
+				details["moduleName"] = diagnostic.ModuleName
+			}
+			if diagnostic.OriginalError != nil {
+				details["originalError"] = diagnostic.OriginalError
+			}
+			i.logger.Log(diagnostic.Level, LogMessage(diagnostic.Message), details)
+		}
+	}
+
+	if diagnostic.Level == LogLevelError {
+		i.emitter.Trigger("error", EventDetails{"diagnostic": diagnostic})
+	}
+}
+
+func (i *Featurevisor) getModuleApi(module *FeaturevisorModule) FeaturevisorModuleApi {
+	return FeaturevisorModuleApi{
+		GetRevision: func() string {
+			return i.GetRevision()
+		},
+		OnDiagnostic: func(
+			handler FeaturevisorDiagnosticHandler,
+			options ...FeaturevisorModuleDiagnosticOptions,
+		) FeaturevisorUnsubscribe {
+			logLevel := LogLevelInfo
+			if len(options) > 0 && options[0].LogLevel != "" {
+				logLevel = options[0].LogLevel
+			}
+
+			subscription := moduleDiagnosticSubscription{
+				id:       i.nextModuleDiagnosticID,
+				module:   module,
+				handler:  handler,
+				logLevel: logLevel,
+			}
+			i.nextModuleDiagnosticID++
+
+			i.moduleDiagnosticSubscriptions = append(i.moduleDiagnosticSubscriptions, subscription)
+			subscriptionID := subscription.id
+
+			return func() {
+				filtered := []moduleDiagnosticSubscription{}
+				for _, currentSubscription := range i.moduleDiagnosticSubscriptions {
+					if currentSubscription.id != subscriptionID {
+						filtered = append(filtered, currentSubscription)
+					}
+				}
+				i.moduleDiagnosticSubscriptions = filtered
+			}
+		},
+		ReportDiagnostic: func(diagnostic FeaturevisorModuleReportedDiagnostic) {
+			if module != nil && module.Name != "" {
+				diagnostic.Module = module.Name
+			}
+			i.reportDiagnostic(diagnostic, module)
+		},
+	}
+}
+
+func (i *Featurevisor) clearModuleDiagnosticSubscriptions(module *FeaturevisorModule) {
+	filtered := []moduleDiagnosticSubscription{}
+	for _, subscription := range i.moduleDiagnosticSubscriptions {
+		if subscription.module != module {
+			filtered = append(filtered, subscription)
+		}
+	}
+	i.moduleDiagnosticSubscriptions = filtered
 }
 
 // SetContext sets the context
 func (i *Featurevisor) SetContext(context Context, replace ...bool) {
+	if i.closed {
+		return
+	}
+
 	replaceValue := false
 	if len(replace) > 0 {
 		replaceValue = replace[0]
@@ -281,7 +454,7 @@ func (i *Featurevisor) getEvaluationDependencies(context Context, options Overri
 	return EvaluateDependencies{
 		Context:               i.GetContext(context),
 		Logger:                i.logger,
-		HooksManager:          i.hooksManager,
+		ModulesManager:        i.modulesManager,
 		DatafileReader:        i.datafileReader,
 		Sticky:                sticky,
 		DefaultVariationValue: options.DefaultVariationValue,
@@ -291,7 +464,7 @@ func (i *Featurevisor) getEvaluationDependencies(context Context, options Overri
 
 // EvaluateFlag evaluates a feature flag
 func (i *Featurevisor) EvaluateFlag(featureKey string, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithHooks(EvaluateOptions{
+	return EvaluateWithModules(EvaluateOptions{
 		EvaluateParams: EvaluateParams{
 			Type:       EvaluationTypeFlag,
 			FeatureKey: FeatureKey(featureKey),
@@ -336,7 +509,7 @@ func (i *Featurevisor) IsEnabled(featureKey string, args ...interface{}) bool {
 
 // EvaluateVariation evaluates a feature variation
 func (i *Featurevisor) EvaluateVariation(featureKey string, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithHooks(EvaluateOptions{
+	return EvaluateWithModules(EvaluateOptions{
 		EvaluateParams: EvaluateParams{
 			Type:       EvaluationTypeVariation,
 			FeatureKey: FeatureKey(featureKey),
@@ -389,7 +562,7 @@ func (i *Featurevisor) GetVariation(featureKey string, args ...interface{}) *str
 
 // EvaluateVariable evaluates a feature variable
 func (i *Featurevisor) EvaluateVariable(featureKey string, variableKey VariableKey, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithHooks(EvaluateOptions{
+	return EvaluateWithModules(EvaluateOptions{
 		EvaluateParams: EvaluateParams{
 			Type:        EvaluationTypeVariable,
 			FeatureKey:  FeatureKey(featureKey),
@@ -645,6 +818,32 @@ func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, 
 // CreateInstance creates a new Featurevisor instance
 func CreateInstance(options Options) *Featurevisor {
 	return NewFeaturevisor(options)
+}
+
+func mergeStoredDatafile(existing DatafileContent, incoming DatafileContent) DatafileContent {
+	mergedSegments := map[SegmentKey]Segment{}
+	for key, value := range existing.Segments {
+		mergedSegments[key] = value
+	}
+	for key, value := range incoming.Segments {
+		mergedSegments[key] = value
+	}
+
+	mergedFeatures := map[FeatureKey]Feature{}
+	for key, value := range existing.Features {
+		mergedFeatures[key] = value
+	}
+	for key, value := range incoming.Features {
+		mergedFeatures[key] = value
+	}
+
+	return DatafileContent{
+		SchemaVersion:       incoming.SchemaVersion,
+		Revision:            incoming.Revision,
+		FeaturevisorVersion: incoming.FeaturevisorVersion,
+		Segments:            mergedSegments,
+		Features:            mergedFeatures,
+	}
 }
 
 func parseDatafileInput(datafile interface{}) (DatafileContent, error) {

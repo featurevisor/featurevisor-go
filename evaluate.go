@@ -16,7 +16,7 @@ type EvaluateParams struct {
 type EvaluateDependencies struct {
 	Context        Context
 	Logger         *Logger
-	HooksManager   *HooksManager
+	ModulesManager *ModulesManager
 	DatafileReader *DatafileReader
 
 	// OverrideOptions
@@ -32,8 +32,8 @@ type EvaluateOptions struct {
 	EvaluateDependencies
 }
 
-// EvaluateWithHooks evaluates a feature with hooks
-func EvaluateWithHooks(opts EvaluateOptions) Evaluation {
+// EvaluateWithModules evaluates a feature with modules.
+func EvaluateWithModules(opts EvaluateOptions) Evaluation {
 	var evaluation Evaluation
 
 	defer func() {
@@ -53,14 +53,14 @@ func EvaluateWithHooks(opts EvaluateOptions) Evaluation {
 		}
 	}()
 
-	hooksManager := opts.HooksManager
-	hooks := hooksManager.GetAll()
+	modulesManager := opts.ModulesManager
+	modules := modulesManager.GetAll()
 
-	// run before hooks
+	// run before modules
 	options := opts
-	for _, hook := range hooks {
-		if hook.Before != nil {
-			options = hook.Before(options)
+	for _, module := range modules {
+		if module.Before != nil {
+			options = module.Before(options)
 		}
 	}
 
@@ -81,10 +81,10 @@ func EvaluateWithHooks(opts EvaluateOptions) Evaluation {
 		evaluation.VariableValue = opts.DefaultVariableValue
 	}
 
-	// run after hooks
-	for _, hook := range hooks {
-		if hook.After != nil {
-			evaluation = hook.After(evaluation, options)
+	// run after modules
+	for _, module := range modules {
+		if module.After != nil {
+			evaluation = module.After(evaluation, options)
 		}
 	}
 
@@ -474,9 +474,9 @@ func Evaluate(options EvaluateOptions) Evaluation {
 		Logger:     options.Logger,
 	})
 
-	for _, hook := range options.HooksManager.GetAll() {
-		if hook.BucketKey != nil {
-			bucketKey = hook.BucketKey(ConfigureBucketKeyOptions{
+	for _, module := range options.ModulesManager.GetAll() {
+		if module.BucketKey != nil {
+			bucketKey = module.BucketKey(ConfigureBucketKeyOptions{
 				FeatureKey: options.FeatureKey,
 				Context:    options.Context,
 				BucketBy:   feature.BucketBy,
@@ -488,9 +488,9 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	// bucketValue
 	bucketValue := GetBucketedNumber(bucketKey)
 
-	for _, hook := range options.HooksManager.GetAll() {
-		if hook.BucketValue != nil {
-			bucketValue = hook.BucketValue(ConfigureBucketValueOptions{
+	for _, module := range options.ModulesManager.GetAll() {
+		if module.BucketValue != nil {
+			bucketValue = module.BucketValue(ConfigureBucketValueOptions{
 				FeatureKey:  options.FeatureKey,
 				BucketKey:   bucketKey,
 				Context:     options.Context,

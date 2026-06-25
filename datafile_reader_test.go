@@ -7,7 +7,7 @@ import (
 func TestNewDatafileReader(t *testing.T) {
 	logger := NewLogger(CreateLoggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "1.0.0",
+		"schemaVersion": "2",
 		"revision": "test-revision",
 		"segments": {},
 		"features": {}
@@ -31,15 +31,15 @@ func TestNewDatafileReader(t *testing.T) {
 		t.Errorf("Expected revision 'test-revision', got '%s'", reader.GetRevision())
 	}
 
-	if reader.GetSchemaVersion() != "1.0.0" {
-		t.Errorf("Expected schema version '1.0.0', got '%s'", reader.GetSchemaVersion())
+	if reader.GetSchemaVersion() != "2" {
+		t.Errorf("Expected schema version '2', got '%s'", reader.GetSchemaVersion())
 	}
 }
 
 func TestDatafileReaderGetRegex(t *testing.T) {
 	logger := NewLogger(CreateLoggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "1.0.0",
+		"schemaVersion": "2",
 		"revision": "test-revision",
 		"segments": {},
 		"features": {}
@@ -73,7 +73,7 @@ func TestDatafileReaderGetRegex(t *testing.T) {
 func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
 	logger := NewLogger(CreateLoggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "1.0.0",
+		"schemaVersion": "2",
 		"revision": "test-revision",
 		"segments": {},
 		"features": {}

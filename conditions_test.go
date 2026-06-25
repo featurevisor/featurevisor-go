@@ -317,7 +317,7 @@ func TestConditionIsMatchedDate(t *testing.T) {
 func TestConditionIsMatchedComprehensive(t *testing.T) {
 	logger := NewLogger(CreateLoggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "2.0",
+		"schemaVersion": "2",
 		"revision": "1",
 		"segments": {},
 		"features": {}
@@ -857,7 +857,7 @@ func TestConditionIsMatchedEdgeCases(t *testing.T) {
 func TestConditionIsMatchedComplexNested(t *testing.T) {
 	logger := NewLogger(CreateLoggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "2.0",
+		"schemaVersion": "2",
 		"revision": "1",
 		"segments": {},
 		"features": {}

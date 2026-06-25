@@ -1,8 +1,8 @@
 # Featurevisor Go SDK <!-- omit in toc -->
 
-This is a port of Featurevisor [Javascript SDK](https://featurevisor.com/docs/sdks/javascript/) v2.x to Go, providing a way to evaluate feature flags, variations, and variables in your Go applications.
+This is a port of Featurevisor [Javascript SDK](https://featurevisor.com/docs/sdks/javascript/) v3.x to Go, providing a way to evaluate feature flags, variations, and variables in your Go applications.
 
-This SDK is compatible with [Featurevisor](https://featurevisor.com/) v2.0 projects and above.
+This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 projects and v2 datafiles.
 
 See example application [here](https://github.com/featurevisor/featurevisor-example-go).
 
@@ -31,14 +31,15 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
   - [Levels](#levels)
   - [Customizing levels](#customizing-levels)
   - [Handler](#handler)
+- [Diagnostics](#diagnostics)
 - [Events](#events)
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
   - [`sticky_set`](#sticky_set)
 - [Evaluation details](#evaluation-details)
-- [Hooks](#hooks)
-  - [Defining a hook](#defining-a-hook)
-  - [Registering hooks](#registering-hooks)
+- [Modules](#modules)
+  - [Defining a module](#defining-a-module)
+  - [Registering modules](#registering-modules)
 - [Child instance](#child-instance)
 - [Close](#close)
 - [CLI usage](#cli-usage)
@@ -370,7 +371,11 @@ You may also initialize the SDK without passing `datafile`, and set it later on:
 f.SetDatafile(datafileContent)
 ```
 
-`SetDatafile` accepts either parsed `featurevisor.DatafileContent` or a raw JSON string.
+`SetDatafile` accepts either parsed `featurevisor.DatafileContent` or a raw JSON string. By default, it merges the incoming datafile into the SDK's stored datafile. Pass `true` as the second argument to replace the stored datafile instead:
+
+```go
+f.SetDatafile(datafileContent, true) // replace existing datafile
+```
 
 ### Updating datafile
 
@@ -493,6 +498,20 @@ f := featurevisor.CreateInstance(featurevisor.Options{
 
 Further log levels like `info` and `debug` will help you understand how the feature variations and variables are evaluated in the runtime against given context.
 
+## Diagnostics
+
+You can observe SDK and module diagnostics with `OnDiagnostic`:
+
+```go
+f := featurevisor.CreateInstance(featurevisor.Options{
+    OnDiagnostic: func(diagnostic featurevisor.FeaturevisorDiagnostic) {
+        fmt.Println(diagnostic.Level, diagnostic.Code, diagnostic.Message)
+    },
+})
+```
+
+Modules can also subscribe to diagnostics or report their own from `Setup` via the provided module API.
+
 ## Events
 
 Featurevisor SDK implements a simple event emitter that allows you to listen to events that happen in the runtime.
@@ -581,24 +600,31 @@ And optionally these properties depending on whether you are evaluating a featur
 - `VariableSchema`: the variable schema
 - `VariableOverrideIndex`: index of matched variable override when applicable
 
-## Hooks
+## Modules
 
-Hooks allow you to intercept the evaluation process and customize it further as per your needs.
+Modules allow you to intercept the evaluation process and customize it further as per your needs.
 
-### Defining a hook
+### Defining a module
 
-A hook is a simple struct with a unique required `Name` and optional functions:
+A module is a simple struct with a recommended unique `Name` and optional functions:
 
 ```go
 import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-myCustomHook := &featurevisor.Hook{
-    // only required property
-    Name: "my-custom-hook",
+myCustomModule := &featurevisor.FeaturevisorModule{
+    // recommended for diagnostics and removal
+    Name: "my-custom-module",
 
-    // rest of the properties below are all optional per hook
+    // rest of the properties below are all optional per module
+    Setup: func(api featurevisor.FeaturevisorModuleApi) {
+        api.ReportDiagnostic(featurevisor.FeaturevisorModuleReportedDiagnostic{
+            Level:   featurevisor.LogLevelInfo,
+            Code:    "module_ready",
+            Message: "Module is ready",
+        })
+    },
 
     // before evaluation
     Before: func(options featurevisor.EvaluateOptions) featurevisor.EvaluateOptions {
@@ -611,30 +637,35 @@ myCustomHook := &featurevisor.Hook{
     },
 
     // after evaluation
-    After: func(evaluation featurevisor.Evaluation, options featurevisor.EvaluateOptions) {
+    After: func(evaluation featurevisor.Evaluation, options featurevisor.EvaluateOptions) featurevisor.Evaluation {
         if evaluation.Reason == "error" {
             // log error
-            return
+            return evaluation
         }
+        return evaluation
     },
 
     // configure bucket key
-    BucketKey: func(options featurevisor.EvaluateOptions) string {
+    BucketKey: func(options featurevisor.ConfigureBucketKeyOptions) featurevisor.BucketKey {
         // return custom bucket key
         return options.BucketKey
     },
 
     // configure bucket value (between 0 and 100,000)
-    BucketValue: func(options featurevisor.EvaluateOptions) int {
+    BucketValue: func(options featurevisor.ConfigureBucketValueOptions) featurevisor.BucketValue {
         // return custom bucket value
         return options.BucketValue
+    },
+
+    Close: func() {
+        // clean up module resources
     },
 }
 ```
 
-### Registering hooks
+### Registering modules
 
-You can register hooks at the time of SDK initialization:
+You can register modules at the time of SDK initialization:
 
 ```go
 import (
@@ -642,8 +673,8 @@ import (
 )
 
 f := featurevisor.CreateInstance(featurevisor.Options{
-    Hooks: []*featurevisor.Hook{
-        myCustomHook,
+    Modules: []*featurevisor.FeaturevisorModule{
+        myCustomModule,
     },
 })
 ```
@@ -651,8 +682,8 @@ f := featurevisor.CreateInstance(featurevisor.Options{
 Or after initialization:
 
 ```go
-removeHook := f.AddHook(myCustomHook)
-removeHook()
+removeModule := f.AddModule(myCustomModule)
+removeModule()
 ```
 
 ## Child instance
@@ -725,25 +756,23 @@ go run cmd/main.go test \
     --projectDirectoryPath="/absolute/path/to/your/featurevisor/project" \
     --quiet|verbose \
     --onlyFailures \
-    --with-scopes \
-    --with-tags \
     --keyPattern="myFeatureKey" \
     --assertionPattern="#1"
 ```
 
-`--with-scopes` and `--with-tags` match Featurevisor CLI behavior by generating and testing against scoped/tagged datafiles via `npx featurevisor build`.
-
 If you want to validate parity locally against the JavaScript SDK runner, you can use the bundled example project:
 
 ```bash
-cd monorepo/examples/example-1
-npx featurevisor test --with-scopes --with-tags
+cd /Users/fahad/Projects/featurevisor/featurevisor/examples/example-1
+npx featurevisor test
 
-# from repository root:
+# from this Go SDK repository root:
 go run cmd/main.go test \
-  --projectDirectoryPath="/absolute/path/to/featurevisor-go/monorepo/examples/example-1" \
-  --with-scopes \
-  --with-tags
+  --projectDirectoryPath="/Users/fahad/Projects/featurevisor/featurevisor/examples/example-1" \
+  --onlyFailures
+
+# or:
+make test-example-1
 ```
 
 ### Benchmark

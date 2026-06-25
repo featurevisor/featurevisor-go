@@ -34,7 +34,7 @@ func TestMutuallyExclusiveFeatures(t *testing.T) {
 	}
 
 	sdk := CreateInstance(Options{
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				BucketValue: func(options ConfigureBucketValueOptions) int {

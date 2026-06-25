@@ -139,10 +139,11 @@ type Context map[string]interface{}
  */
 // DatafileContent represents the content of a datafile
 type DatafileContent struct {
-	SchemaVersion string                 `json:"schemaVersion"`
-	Revision      string                 `json:"revision"`
-	Segments      map[SegmentKey]Segment `json:"segments"`
-	Features      map[FeatureKey]Feature `json:"features"`
+	SchemaVersion       string                 `json:"schemaVersion"`
+	Revision            string                 `json:"revision"`
+	FeaturevisorVersion string                 `json:"featurevisorVersion,omitempty"`
+	Segments            map[SegmentKey]Segment `json:"segments"`
+	Features            map[FeatureKey]Feature `json:"features"`
 }
 
 // FromJSON parses a JSON string and returns a DatafileContent
@@ -157,15 +158,6 @@ func (dc *DatafileContent) ToJSON() (string, error) {
 		return "", fmt.Errorf("failed to marshal DatafileContent to JSON: %w", err)
 	}
 	return string(bytes), nil
-}
-
-// DatafileContentV1 represents the content of a v1 datafile
-type DatafileContentV1 struct {
-	SchemaVersion string      `json:"schemaVersion"`
-	Revision      string      `json:"revision"`
-	Attributes    []Attribute `json:"attributes"`
-	Segments      []Segment   `json:"segments"`
-	Features      []FeatureV1 `json:"features"`
 }
 
 /**
@@ -187,20 +179,6 @@ type Feature struct {
 	Traffic                []Traffic                      `json:"traffic"`
 	Force                  []Force                        `json:"force,omitempty"`
 	Ranges                 []Range                        `json:"ranges,omitempty"`
-}
-
-// FeatureV1 represents a feature in v1 format
-type FeatureV1 struct {
-	Key             *FeatureKey      `json:"key,omitempty"`
-	Hash            *string          `json:"hash,omitempty"`
-	Deprecated      *bool            `json:"deprecated,omitempty"`
-	Required        []Required       `json:"required,omitempty"`
-	BucketBy        BucketBy         `json:"bucketBy"`
-	Traffic         []Traffic        `json:"traffic"`
-	Force           []Force          `json:"force,omitempty"`
-	Ranges          []Range          `json:"ranges,omitempty"`
-	VariablesSchema []VariableSchema `json:"variablesSchema,omitempty"`
-	Variations      []VariationV1    `json:"variations,omitempty"`
 }
 
 // ParsedFeature represents a parsed feature
@@ -422,14 +400,6 @@ type VariableOverride struct {
 	Segments   interface{}   `json:"segments,omitempty"`   // GroupSegment | GroupSegment[]
 }
 
-// VariableV1 represents a variable in v1 format
-type VariableV1 struct {
-	Key         VariableKey        `json:"key"`
-	Value       VariableValue      `json:"value"`
-	Description *string            `json:"description,omitempty"`
-	Overrides   []VariableOverride `json:"overrides,omitempty"`
-}
-
 // VariableSchema represents the schema of a variable
 type VariableSchema struct {
 	Deprecated             *bool          `json:"deprecated,omitempty"`
@@ -462,14 +432,6 @@ type VariableSchema struct {
  */
 // VariationValue represents the value of a variation
 type VariationValue = string
-
-// VariationV1 represents a variation in v1 format
-type VariationV1 struct {
-	Description *string        `json:"description,omitempty"`
-	Value       VariationValue `json:"value"`
-	Weight      *Weight        `json:"weight,omitempty"`
-	Variables   []VariableV1   `json:"variables,omitempty"`
-}
 
 // Variation represents a variation
 type Variation struct {
