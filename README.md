@@ -25,6 +25,9 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
   - [Initialize with sticky](#initialize-with-sticky)
   - [Set sticky afterwards](#set-sticky-afterwards)
 - [Setting datafile](#setting-datafile)
+  - [Merging by default](#merging-by-default)
+  - [Replacing](#replacing)
+  - [Loading datafiles on demand](#loading-datafiles-on-demand)
   - [Updating datafile](#updating-datafile)
   - [Interval-based update](#interval-based-update)
 - [Logging](#logging)
@@ -36,6 +39,7 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
   - [`sticky_set`](#sticky_set)
+  - [`error`](#error)
 - [Evaluation details](#evaluation-details)
 - [Modules](#modules)
   - [Defining a module](#defining-a-module)
@@ -371,10 +375,55 @@ You may also initialize the SDK without passing `datafile`, and set it later on:
 f.SetDatafile(datafileContent)
 ```
 
-`SetDatafile` accepts either parsed `featurevisor.DatafileContent` or a raw JSON string. By default, it merges the incoming datafile into the SDK's stored datafile. Pass `true` as the second argument to replace the stored datafile instead:
+`SetDatafile` accepts either parsed `featurevisor.DatafileContent` or a raw JSON string.
+
+### Merging by default
+
+By default, `SetDatafile(datafile)` merges the incoming datafile with the SDK instance's existing datafile:
+
+- incoming `Features` and `Segments` override matching keys
+- existing `Features` and `Segments` that are missing from the incoming datafile are kept
+- `Revision`, `SchemaVersion`, and `FeaturevisorVersion` are taken from the incoming datafile
+
+This means you can call `SetDatafile` more than once with different datafiles, and the SDK instance accumulates their features and segments together.
+
+### Replacing
+
+Pass `true` as the second argument to replace the stored datafile entirely:
 
 ```go
 f.SetDatafile(datafileContent, true) // replace existing datafile
+```
+
+### Loading datafiles on demand
+
+Because merging is the default, a single SDK instance can start with a small datafile and load more datafiles later as your application needs them, instead of downloading every feature upfront.
+
+This pairs well with [targets](https://featurevisor.com/docs/targets/), where each target produces a smaller datafile for a specific part of your application:
+
+```go
+f := featurevisor.CreateInstance(featurevisor.Options{})
+
+func loadDatafile(target string) {
+    url := fmt.Sprintf("https://cdn.yoursite.com/production/featurevisor-%s.json", target)
+    resp, err := http.Get(url)
+    if err != nil {
+        return
+    }
+    defer resp.Body.Close()
+
+    datafileBytes, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return
+    }
+
+    f.SetDatafile(string(datafileBytes))
+}
+
+loadDatafile("products")
+
+// later, when the user reaches checkout
+loadDatafile("checkout")
 ```
 
 ### Updating datafile
@@ -564,6 +613,15 @@ unsubscribe := f.On(featurevisor.EventNameStickySet, func(details featurevisor.E
     features := details["features"] // list of all affected feature keys
 
     fmt.Println("Sticky features set")
+})
+```
+
+### `error`
+
+```go
+unsubscribe := f.On(featurevisor.EventNameError, func(details featurevisor.EventDetails) {
+    diagnostic := details["diagnostic"]
+    fmt.Println(diagnostic)
 })
 ```
 

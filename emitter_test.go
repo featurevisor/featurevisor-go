@@ -10,6 +10,7 @@ func TestEventNames(t *testing.T) {
 		EventNameDatafileSet,
 		EventNameContextSet,
 		EventNameStickySet,
+		EventNameError,
 	}
 
 	for _, eventName := range eventNames {

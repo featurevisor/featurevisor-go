@@ -710,6 +710,27 @@ func targetDatafileCacheKey(environment *string, target string) string {
 	return fmt.Sprintf("%s-target-%s", base, target)
 }
 
+func datafileCacheKeyForAssertion(assertion map[string]interface{}, datafileCache map[string]interface{}) string {
+	var environment *string
+	if rawEnvironment, exists := assertion["environment"]; exists {
+		if env, ok := rawEnvironment.(string); ok {
+			envCopy := env
+			environment = &envCopy
+		}
+	}
+
+	selectedDatafileKey := datafileCacheKey(environment)
+
+	if targetValue, ok := assertion["target"].(string); ok && targetValue != "" {
+		targetKey := targetDatafileCacheKey(environment, targetValue)
+		if _, exists := datafileCache[targetKey]; exists {
+			selectedDatafileKey = targetKey
+		}
+	}
+
+	return selectedDatafileKey
+}
+
 func buildDatafileCache(
 	featurevisorProjectPath string,
 	config map[string]interface{},
@@ -862,22 +883,7 @@ func runTest(opts CLIOptions) {
 				var testResult AssertionResult
 
 				if _, hasFeature := test["feature"]; hasFeature {
-					var environment *string
-					if rawEnvironment, exists := assertionMap["environment"]; exists {
-						if env, ok := rawEnvironment.(string); ok {
-							envCopy := env
-							environment = &envCopy
-						}
-					}
-
-					selectedDatafileKey := datafileCacheKey(environment)
-
-					if targetValue, ok := assertionMap["target"].(string); ok && targetValue != "" {
-						targetKey := targetDatafileCacheKey(environment, targetValue)
-						if _, exists := datafileCache[targetKey]; exists {
-							selectedDatafileKey = targetKey
-						}
-					}
+					selectedDatafileKey := datafileCacheKeyForAssertion(assertionMap, datafileCache)
 
 					datafile, ok := datafileCache[selectedDatafileKey]
 					if !ok {

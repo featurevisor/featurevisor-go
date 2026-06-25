@@ -299,7 +299,7 @@ func (i *Featurevisor) reportDiagnostic(
 	}
 
 	if diagnostic.Level == LogLevelError {
-		i.emitter.Trigger("error", EventDetails{"diagnostic": diagnostic})
+		i.emitter.Trigger(EventNameError, EventDetails{"diagnostic": diagnostic})
 	}
 }
 

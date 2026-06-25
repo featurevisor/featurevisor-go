@@ -12,6 +12,7 @@ const (
 	EventNameDatafileSet EventName = "datafile_set"
 	EventNameContextSet  EventName = "context_set"
 	EventNameStickySet   EventName = "sticky_set"
+	EventNameError       EventName = "error"
 )
 
 // EventDetails represents additional details for events
