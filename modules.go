@@ -41,6 +41,14 @@ type FeaturevisorModule struct {
 	Close       func()                                                          `json:"close,omitempty"`
 }
 
+func getModuleName(module *FeaturevisorModule) string {
+	if module == nil {
+		return ""
+	}
+
+	return module.Name
+}
+
 // ModulesManagerOptions contains options for creating a modules manager.
 type ModulesManagerOptions struct {
 	Modules                            []*FeaturevisorModule
@@ -102,13 +110,44 @@ func (mm *ModulesManager) Add(module *FeaturevisorModule) FeaturevisorUnsubscrib
 	mm.modules = append(mm.modules, module)
 
 	return func() {
+		moduleExists := false
+		for _, existingModule := range mm.modules {
+			if existingModule == module {
+				moduleExists = true
+				break
+			}
+		}
+
 		mm.modules = filterModules(mm.modules, func(existingModule *FeaturevisorModule) bool {
 			return existingModule != module
 		})
 		if mm.clearModuleDiagnosticSubscriptions != nil {
 			mm.clearModuleDiagnosticSubscriptions(module)
 		}
+		if moduleExists {
+			mm.closeModule(module)
+		}
 	}
+}
+
+func (mm *ModulesManager) closeModule(module *FeaturevisorModule) {
+	if module == nil || module.Close == nil {
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil && mm.reportDiagnostic != nil {
+			mm.reportDiagnostic(FeaturevisorDiagnostic{
+				Level:         LogLevelError,
+				Code:          "module_close_error",
+				Message:       "Module close failed",
+				ModuleName:    getModuleName(module),
+				OriginalError: r,
+			}, nil)
+		}
+	}()
+
+	module.Close()
 }
 
 // Remove removes modules by name.
@@ -131,6 +170,10 @@ func (mm *ModulesManager) Remove(name string) {
 			mm.clearModuleDiagnosticSubscriptions(module)
 		}
 	}
+
+	for _, module := range removedModules {
+		mm.closeModule(module)
+	}
 }
 
 // GetAll returns all modules.
@@ -147,9 +190,7 @@ func (mm *ModulesManager) CloseAll() {
 		if mm.clearModuleDiagnosticSubscriptions != nil {
 			mm.clearModuleDiagnosticSubscriptions(module)
 		}
-		if module.Close != nil {
-			module.Close()
-		}
+		mm.closeModule(module)
 	}
 }
 

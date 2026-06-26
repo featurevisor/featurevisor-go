@@ -145,6 +145,33 @@ func TestEmitterMultipleListeners(t *testing.T) {
 	}
 }
 
+func TestEmitterTriggerUsesListenerSnapshot(t *testing.T) {
+	emitter := NewEmitter()
+	calls := []string{}
+	var unsubscribeSecond Unsubscribe
+
+	emitter.On(EventNameStickySet, func(details EventDetails) {
+		calls = append(calls, "first")
+		unsubscribeSecond()
+	})
+	unsubscribeSecond = emitter.On(EventNameStickySet, func(details EventDetails) {
+		calls = append(calls, "second")
+	})
+
+	emitter.Trigger(EventNameStickySet, nil)
+	emitter.Trigger(EventNameStickySet, nil)
+
+	expected := []string{"first", "second", "first"}
+	if len(calls) != len(expected) {
+		t.Fatalf("expected calls %#v, got %#v", expected, calls)
+	}
+	for i, call := range calls {
+		if call != expected[i] {
+			t.Fatalf("expected calls %#v, got %#v", expected, calls)
+		}
+	}
+}
+
 func TestEmitterUnsubscribe(t *testing.T) {
 	emitter := NewEmitter()
 

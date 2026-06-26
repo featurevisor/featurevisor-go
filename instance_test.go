@@ -490,6 +490,133 @@ func TestModulesSetupDiagnosticsAndClose(t *testing.T) {
 	}
 }
 
+func TestRemovedModulesAreClosed(t *testing.T) {
+	closed := []string{}
+	instance := CreateInstance(Options{})
+
+	unsubscribe := instance.AddModule(&FeaturevisorModule{
+		Name: "dynamic",
+		Close: func() {
+			closed = append(closed, "dynamic")
+		},
+	})
+
+	if unsubscribe == nil {
+		t.Fatal("expected add module to return unsubscribe")
+	}
+
+	unsubscribe()
+	unsubscribe()
+
+	instance.AddModule(&FeaturevisorModule{
+		Name: "dynamic",
+		Close: func() {
+			closed = append(closed, "dynamic-again")
+		},
+	})
+	instance.RemoveModule("dynamic")
+
+	if len(closed) != 2 || closed[0] != "dynamic" || closed[1] != "dynamic-again" {
+		t.Fatalf("expected removed modules to be closed once each, got %#v", closed)
+	}
+}
+
+func TestModuleCloseErrorsAreReportedAndDoNotStopCleanup(t *testing.T) {
+	var diagnostics []FeaturevisorDiagnostic
+	var errorEvents []FeaturevisorDiagnostic
+	closed := []string{}
+
+	instance := CreateInstance(Options{
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+	})
+
+	instance.On(EventNameError, func(details EventDetails) {
+		if diagnostic, ok := details["diagnostic"].(FeaturevisorDiagnostic); ok {
+			errorEvents = append(errorEvents, diagnostic)
+		}
+	})
+
+	instance.AddModule(&FeaturevisorModule{
+		Name: "first",
+		Close: func() {
+			closed = append(closed, "first")
+			panic("first close failed")
+		},
+	})
+	instance.AddModule(&FeaturevisorModule{
+		Name: "second",
+		Close: func() {
+			closed = append(closed, "second")
+		},
+	})
+
+	instance.Close()
+
+	if len(closed) != 2 || closed[0] != "first" || closed[1] != "second" {
+		t.Fatalf("expected close cleanup to continue after a module panics, got %#v", closed)
+	}
+
+	foundDiagnostic := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "module_close_error" &&
+			diagnostic.Level == LogLevelError &&
+			diagnostic.ModuleName == "first" &&
+			diagnostic.OriginalError != nil {
+			foundDiagnostic = true
+			break
+		}
+	}
+	if !foundDiagnostic {
+		t.Fatalf("expected module_close_error diagnostic, got %#v", diagnostics)
+	}
+
+	foundErrorEvent := false
+	for _, diagnostic := range errorEvents {
+		if diagnostic.Code == "module_close_error" && diagnostic.ModuleName == "first" {
+			foundErrorEvent = true
+			break
+		}
+	}
+	if !foundErrorEvent {
+		t.Fatalf("expected module_close_error to trigger error event, got %#v", errorEvents)
+	}
+}
+
+func TestModuleUnsubscribeReportsCloseErrors(t *testing.T) {
+	var diagnostics []FeaturevisorDiagnostic
+	instance := CreateInstance(Options{
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+	})
+
+	unsubscribe := instance.AddModule(&FeaturevisorModule{
+		Name: "dynamic",
+		Close: func() {
+			panic("dynamic close failed")
+		},
+	})
+	if unsubscribe == nil {
+		t.Fatal("expected add module to return unsubscribe")
+	}
+
+	unsubscribe()
+	unsubscribe()
+
+	foundDiagnostic := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "module_close_error" && diagnostic.ModuleName == "dynamic" {
+			foundDiagnostic = true
+			break
+		}
+	}
+	if !foundDiagnostic {
+		t.Fatalf("expected module_close_error diagnostic from unsubscribe, got %#v", diagnostics)
+	}
+}
+
 func TestSetDatafileMergesByDefaultAndReplacesWhenRequested(t *testing.T) {
 	instance := CreateInstance(Options{
 		Datafile: DatafileContent{

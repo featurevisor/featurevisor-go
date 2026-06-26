@@ -151,6 +151,30 @@ func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
 	if !result {
 		t.Error("Or condition should match when at least one sub-condition matches")
 	}
+
+	notCondition := NotCondition{
+		Not: []Condition{
+			PlainCondition{
+				Attribute: "country",
+				Operator:  OperatorEquals,
+				Value:     func() *ConditionValue { v := ConditionValue("US"); return &v }(),
+			},
+			PlainCondition{
+				Attribute: "age",
+				Operator:  OperatorGreaterThan,
+				Value:     func() *ConditionValue { v := ConditionValue(30); return &v }(),
+			},
+		},
+	}
+	result = reader.AllConditionsAreMatched(notCondition, context)
+	if !result {
+		t.Error("NOT condition should match when not all direct children match")
+	}
+
+	result = reader.AllConditionsAreMatched(NotCondition{Not: []Condition{}}, context)
+	if result {
+		t.Error("Empty NOT condition should defensively return false")
+	}
 }
 
 // TestDatafileReaderComprehensive tests comprehensive datafile reader functionality
@@ -458,6 +482,54 @@ func TestDatafileReaderSegmentMatching(t *testing.T) {
 		})
 		if result {
 			t.Error("German mobile users should not match")
+		}
+	})
+
+	t.Run("not segments negate implicit and", func(t *testing.T) {
+		segments := NotGroupSegment{
+			Not: []GroupSegment{"mobileUsers", "netherlands"},
+		}
+
+		result := reader.AllSegmentsAreMatched(segments, Context{
+			"country":    "nl",
+			"deviceType": "mobile",
+		})
+		if result {
+			t.Error("NOT segments should not match when all direct children match")
+		}
+
+		result = reader.AllSegmentsAreMatched(segments, Context{
+			"country":    "nl",
+			"deviceType": "desktop",
+		})
+		if !result {
+			t.Error("NOT segments should match when only some direct children match")
+		}
+	})
+
+	t.Run("not with nested or means none match", func(t *testing.T) {
+		segments := NotGroupSegment{
+			Not: []GroupSegment{
+				OrGroupSegment{
+					Or: []GroupSegment{"mobileUsers", "desktopUsers"},
+				},
+			},
+		}
+
+		if reader.AllSegmentsAreMatched(segments, Context{"deviceType": "mobile"}) {
+			t.Error("Nested OR under NOT should not match mobile users")
+		}
+
+		if !reader.AllSegmentsAreMatched(segments, Context{"deviceType": "tv"}) {
+			t.Error("Nested OR under NOT should match when none of the OR children match")
+		}
+	})
+
+	t.Run("empty not segments return false", func(t *testing.T) {
+		segments := NotGroupSegment{Not: []GroupSegment{}}
+
+		if reader.AllSegmentsAreMatched(segments, Context{}) {
+			t.Error("Empty NOT segments should defensively return false")
 		}
 	})
 }
