@@ -328,7 +328,7 @@ func TestConditionIsMatchedComprehensive(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})
@@ -868,7 +868,7 @@ func TestConditionIsMatchedComplexNested(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})

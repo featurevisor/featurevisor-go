@@ -42,7 +42,7 @@ type Featurevisor struct {
 
 	// internally created
 	datafile                      DatafileContent
-	datafileReader                *DatafileReader
+	datafileReader                *datafileReader
 	modulesManager                *ModulesManager
 	moduleDiagnosticSubscriptions []moduleDiagnosticSubscription
 	nextModuleDiagnosticID        int
@@ -80,7 +80,7 @@ func NewFeaturevisor(options Options) *Featurevisor {
 		Features:      make(map[FeatureKey]Feature),
 	}
 
-	datafileReader := NewDatafileReader(DatafileReaderOptions{
+	datafileReader := newDatafileReader(datafileReaderOptions{
 		Datafile: emptyDatafile,
 		Logger:   logger,
 	})
@@ -149,7 +149,7 @@ func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
 		storedDatafile = mergeStoredDatafile(i.datafile, datafileContent)
 	}
 
-	newDatafileReader := NewDatafileReader(DatafileReaderOptions{
+	newDatafileReader := newDatafileReader(datafileReaderOptions{
 		Datafile: storedDatafile,
 		Logger:   i.logger,
 	})
@@ -455,7 +455,7 @@ func (i *Featurevisor) getEvaluationDependencies(context Context, options Overri
 		Context:               i.GetContext(context),
 		Logger:                i.logger,
 		ModulesManager:        i.modulesManager,
-		DatafileReader:        i.datafileReader,
+		datafileReader:        i.datafileReader,
 		Sticky:                sticky,
 		DefaultVariationValue: options.DefaultVariationValue,
 		DefaultVariableValue:  options.DefaultVariableValue,

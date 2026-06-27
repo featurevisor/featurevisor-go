@@ -17,7 +17,7 @@ type EvaluateDependencies struct {
 	Context        Context
 	Logger         *Logger
 	ModulesManager *ModulesManager
-	DatafileReader *DatafileReader
+	datafileReader *datafileReader
 
 	// OverrideOptions
 	Sticky *StickyFeatures
@@ -114,7 +114,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	}()
 
 	// feature not found
-	feature := options.DatafileReader.GetFeature(options.FeatureKey)
+	feature := options.datafileReader.GetFeature(options.FeatureKey)
 	if feature == nil {
 		evaluation = Evaluation{
 			Type:       options.Type,
@@ -321,7 +321,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	/**
 	 * Forced
 	 */
-	forceResult := options.DatafileReader.GetMatchedForce(feature, options.Context)
+	forceResult := options.datafileReader.GetMatchedForce(feature, options.Context)
 
 	if forceResult.Force != nil {
 		force := forceResult.Force
@@ -503,13 +503,13 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	var matchedAllocation *Allocation
 
 	if options.Type != EvaluationTypeFlag {
-		matchedTraffic = options.DatafileReader.GetMatchedTraffic(feature.Traffic, options.Context)
+		matchedTraffic = options.datafileReader.GetMatchedTraffic(feature.Traffic, options.Context)
 
 		if matchedTraffic != nil {
-			matchedAllocation = options.DatafileReader.GetMatchedAllocation(matchedTraffic, bucketValue)
+			matchedAllocation = options.datafileReader.GetMatchedAllocation(matchedTraffic, bucketValue)
 		}
 	} else {
-		matchedTraffic = options.DatafileReader.GetMatchedTraffic(feature.Traffic, options.Context)
+		matchedTraffic = options.datafileReader.GetMatchedTraffic(feature.Traffic, options.Context)
 	}
 
 	if matchedTraffic != nil {
@@ -785,11 +785,11 @@ func Evaluate(options EvaluateOptions) Evaluation {
 						matched := false
 
 						if override.Conditions != nil {
-							parsedConditions := options.DatafileReader.parseConditionsIfStringified(override.Conditions)
-							matched = options.DatafileReader.AllConditionsAreMatched(parsedConditions, options.Context)
+							parsedConditions := options.datafileReader.parseConditionsIfStringified(override.Conditions)
+							matched = options.datafileReader.AllConditionsAreMatched(parsedConditions, options.Context)
 						} else if override.Segments != nil {
-							parsedSegments := options.DatafileReader.parseSegmentsIfStringified(override.Segments)
-							matched = options.DatafileReader.AllSegmentsAreMatched(parsedSegments, options.Context)
+							parsedSegments := options.datafileReader.parseSegmentsIfStringified(override.Segments)
+							matched = options.datafileReader.AllSegmentsAreMatched(parsedSegments, options.Context)
 						}
 
 						if matched {
@@ -862,12 +862,12 @@ func Evaluate(options EvaluateOptions) Evaluation {
 								matched := false
 
 								if override.Conditions != nil {
-									parsedConditions := options.DatafileReader.parseConditionsIfStringified(override.Conditions)
-									matched = options.DatafileReader.AllConditionsAreMatched(parsedConditions, options.Context)
+									parsedConditions := options.datafileReader.parseConditionsIfStringified(override.Conditions)
+									matched = options.datafileReader.AllConditionsAreMatched(parsedConditions, options.Context)
 								} else if override.Segments != nil {
 									// Parse segments if they come from JSON unmarshaling
-									parsedSegments := options.DatafileReader.parseSegmentsIfStringified(override.Segments)
-									matched = options.DatafileReader.AllSegmentsAreMatched(parsedSegments, options.Context)
+									parsedSegments := options.datafileReader.parseSegmentsIfStringified(override.Segments)
+									matched = options.datafileReader.AllSegmentsAreMatched(parsedSegments, options.Context)
 								}
 
 								if matched {

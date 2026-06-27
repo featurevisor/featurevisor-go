@@ -132,7 +132,7 @@ func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options O
 		Context:               c.GetContext(context),
 		Logger:                c.parent.logger,
 		ModulesManager:        c.parent.modulesManager,
-		DatafileReader:        c.parent.datafileReader,
+		datafileReader:        c.parent.datafileReader,
 		Sticky:                sticky,
 		DefaultVariationValue: options.DefaultVariationValue,
 		DefaultVariableValue:  options.DefaultVariableValue,

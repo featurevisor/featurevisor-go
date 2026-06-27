@@ -2,8 +2,8 @@ package featurevisor
 
 // getParamsForDatafileSetEvent gets parameters for datafile set event
 func getParamsForDatafileSetEvent(
-	previousDatafileReader *DatafileReader,
-	newDatafileReader *DatafileReader,
+	previousDatafileReader *datafileReader,
+	newDatafileReader *datafileReader,
 	replace bool,
 ) LogDetails {
 	previousRevision := ""

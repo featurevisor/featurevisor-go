@@ -355,26 +355,12 @@ func RunTestSegment(assertion map[string]interface{}, segment map[string]interfa
 
 	conditions := segment["conditions"]
 
-	datafile := featurevisor.DatafileContent{
-		SchemaVersion: "2",
-		Revision:      "tester",
-		Features:      make(map[featurevisor.FeatureKey]featurevisor.Feature),
-		Segments:      make(map[featurevisor.SegmentKey]featurevisor.Segment),
-	}
-
-	levelStr := featurevisor.LogLevel(level)
-	logger := featurevisor.NewLogger(featurevisor.CreateLoggerOptions{Level: &levelStr})
-	datafileReader := featurevisor.NewDatafileReader(featurevisor.DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
-	})
-
 	hasError := false
 	errors := ""
 	startTime := time.Now()
 
 	if expectedToMatch, ok := assertion["expectedToMatch"].(bool); ok {
-		actual := datafileReader.AllConditionsAreMatched(conditions, context)
+		actual := featurevisor.AllConditionsAreMatched(conditions, context)
 		if actual != expectedToMatch {
 			hasError = true
 			errors += fmt.Sprintf("      ✘ expectedToMatch: expected %v but received %v\n", expectedToMatch, actual)

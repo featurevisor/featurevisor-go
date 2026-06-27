@@ -18,13 +18,13 @@ func TestNewDatafileReader(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})
 
 	if reader == nil {
-		t.Error("NewDatafileReader should return a non-nil reader")
+		t.Error("newDatafileReader should return a non-nil reader")
 	}
 
 	if reader.GetRevision() != "test-revision" {
@@ -50,7 +50,7 @@ func TestDatafileReaderGetRegex(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})
@@ -84,7 +84,7 @@ func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})
@@ -236,7 +236,7 @@ func TestDatafileReaderComprehensive(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})
@@ -391,7 +391,7 @@ func TestDatafileReaderSegmentMatching(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})
@@ -583,7 +583,7 @@ func TestDatafileReaderForceMatching(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})
@@ -650,7 +650,7 @@ func TestDatafileReaderStringifiedParsing(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})
@@ -736,7 +736,7 @@ func TestDatafileReaderErrorHandling(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
+	reader := newDatafileReader(datafileReaderOptions{
 		Datafile: datafile,
 		Logger:   logger,
 	})

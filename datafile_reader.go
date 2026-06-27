@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// DatafileReaderOptions contains options for creating a datafile reader
-type DatafileReaderOptions struct {
+// datafileReaderOptions contains options for creating a datafile reader
+type datafileReaderOptions struct {
 	Datafile DatafileContent
 	Logger   *Logger
 }
@@ -19,8 +19,8 @@ type ForceResult struct {
 	ForceIndex *int   `json:"forceIndex,omitempty"`
 }
 
-// DatafileReader provides functionality to read and query datafile content
-type DatafileReader struct {
+// datafileReader provides functionality to read and query datafile content
+type datafileReader struct {
 	schemaVersion string
 	revision      string
 	segments      map[SegmentKey]Segment
@@ -29,9 +29,9 @@ type DatafileReader struct {
 	regexCache    map[string]*regexp.Regexp
 }
 
-// NewDatafileReader creates a new datafile reader instance
-func NewDatafileReader(options DatafileReaderOptions) *DatafileReader {
-	return &DatafileReader{
+// newDatafileReader creates a new datafile reader instance
+func newDatafileReader(options datafileReaderOptions) *datafileReader {
+	return &datafileReader{
 		schemaVersion: options.Datafile.SchemaVersion,
 		revision:      options.Datafile.Revision,
 		segments:      options.Datafile.Segments,
@@ -41,18 +41,35 @@ func NewDatafileReader(options DatafileReaderOptions) *DatafileReader {
 	}
 }
 
+// AllConditionsAreMatched checks whether a condition tree matches the given context.
+// It mirrors the JavaScript SDK's narrow root helper export without exposing the
+// internal datafile reader implementation.
+func AllConditionsAreMatched(conditions Condition, context Context) bool {
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "matcher",
+			Segments:      make(map[SegmentKey]Segment),
+			Features:      make(map[FeatureKey]Feature),
+		},
+		Logger: NewLogger(CreateLoggerOptions{}),
+	})
+
+	return reader.AllConditionsAreMatched(conditions, context)
+}
+
 // GetRevision returns the revision of the datafile
-func (d *DatafileReader) GetRevision() string {
+func (d *datafileReader) GetRevision() string {
 	return d.revision
 }
 
 // GetSchemaVersion returns the schema version of the datafile
-func (d *DatafileReader) GetSchemaVersion() string {
+func (d *datafileReader) GetSchemaVersion() string {
 	return d.schemaVersion
 }
 
 // GetSegment returns a segment by its key
-func (d *DatafileReader) GetSegment(segmentKey SegmentKey) *Segment {
+func (d *datafileReader) GetSegment(segmentKey SegmentKey) *Segment {
 	segment, exists := d.segments[segmentKey]
 
 	if !exists {
@@ -65,7 +82,7 @@ func (d *DatafileReader) GetSegment(segmentKey SegmentKey) *Segment {
 }
 
 // GetFeatureKeys returns all feature keys
-func (d *DatafileReader) GetFeatureKeys() []string {
+func (d *datafileReader) GetFeatureKeys() []string {
 	keys := make([]string, 0, len(d.features))
 	for key := range d.features {
 		keys = append(keys, string(key))
@@ -74,7 +91,7 @@ func (d *DatafileReader) GetFeatureKeys() []string {
 }
 
 // GetFeature returns a feature by its key
-func (d *DatafileReader) GetFeature(featureKey FeatureKey) *Feature {
+func (d *datafileReader) GetFeature(featureKey FeatureKey) *Feature {
 	feature, exists := d.features[featureKey]
 	if !exists {
 		return nil
@@ -89,7 +106,7 @@ func (d *DatafileReader) GetFeature(featureKey FeatureKey) *Feature {
 }
 
 // GetVariableKeys returns the variable keys for a feature
-func (d *DatafileReader) GetVariableKeys(featureKey FeatureKey) []string {
+func (d *datafileReader) GetVariableKeys(featureKey FeatureKey) []string {
 	feature := d.GetFeature(featureKey)
 
 	if feature == nil || feature.VariablesSchema == nil {
@@ -104,7 +121,7 @@ func (d *DatafileReader) GetVariableKeys(featureKey FeatureKey) []string {
 }
 
 // HasVariations checks if a feature has variations
-func (d *DatafileReader) HasVariations(featureKey FeatureKey) bool {
+func (d *datafileReader) HasVariations(featureKey FeatureKey) bool {
 	feature := d.GetFeature(featureKey)
 
 	if feature == nil {
@@ -115,7 +132,7 @@ func (d *DatafileReader) HasVariations(featureKey FeatureKey) bool {
 }
 
 // GetRegex returns a regex pattern with caching
-func (d *DatafileReader) GetRegex(regexString string, regexFlags string) *regexp.Regexp {
+func (d *datafileReader) GetRegex(regexString string, regexFlags string) *regexp.Regexp {
 	flags := regexFlags
 	if flags == "" {
 		flags = ""
@@ -134,7 +151,7 @@ func (d *DatafileReader) GetRegex(regexString string, regexFlags string) *regexp
 }
 
 // AllConditionsAreMatched checks if all conditions are matched given a context
-func (d *DatafileReader) AllConditionsAreMatched(conditions Condition, context Context) bool {
+func (d *datafileReader) AllConditionsAreMatched(conditions Condition, context Context) bool {
 	// Add error handling wrapper like in TypeScript version
 	defer func() {
 		if r := recover(); r != nil {
@@ -276,12 +293,12 @@ func (d *DatafileReader) AllConditionsAreMatched(conditions Condition, context C
 }
 
 // SegmentIsMatched checks if a segment is matched given a context
-func (d *DatafileReader) SegmentIsMatched(segment *Segment, context Context) bool {
+func (d *datafileReader) SegmentIsMatched(segment *Segment, context Context) bool {
 	return d.AllConditionsAreMatched(segment.Conditions, context)
 }
 
 // AllSegmentsAreMatched checks if all segments are matched given a context
-func (d *DatafileReader) AllSegmentsAreMatched(groupSegments interface{}, context Context) bool {
+func (d *datafileReader) AllSegmentsAreMatched(groupSegments interface{}, context Context) bool {
 	// Add error handling wrapper like in TypeScript version
 	defer func() {
 		if r := recover(); r != nil {
@@ -397,7 +414,7 @@ func (d *DatafileReader) AllSegmentsAreMatched(groupSegments interface{}, contex
 }
 
 // GetMatchedTraffic returns the matched traffic for a given context
-func (d *DatafileReader) GetMatchedTraffic(traffic []Traffic, context Context) *Traffic {
+func (d *datafileReader) GetMatchedTraffic(traffic []Traffic, context Context) *Traffic {
 	for _, t := range traffic {
 		segments := d.parseSegmentsIfStringified(t.Segments)
 		if d.AllSegmentsAreMatched(segments, context) {
@@ -412,7 +429,7 @@ func (d *DatafileReader) GetMatchedTraffic(traffic []Traffic, context Context) *
 }
 
 // GetMatchedAllocation returns the matched allocation for a given bucket value
-func (d *DatafileReader) GetMatchedAllocation(traffic *Traffic, bucketValue int) *Allocation {
+func (d *datafileReader) GetMatchedAllocation(traffic *Traffic, bucketValue int) *Allocation {
 	if traffic.Allocation == nil {
 		return nil
 	}
@@ -430,7 +447,7 @@ func (d *DatafileReader) GetMatchedAllocation(traffic *Traffic, bucketValue int)
 }
 
 // GetMatchedForce returns the matched force for a given feature and context
-func (d *DatafileReader) GetMatchedForce(featureKey interface{}, context Context) ForceResult {
+func (d *datafileReader) GetMatchedForce(featureKey interface{}, context Context) ForceResult {
 	result := ForceResult{
 		Force:      nil,
 		ForceIndex: nil,
@@ -477,7 +494,7 @@ func (d *DatafileReader) GetMatchedForce(featureKey interface{}, context Context
 }
 
 // parseConditionsIfStringified parses conditions if they are stringified
-func (d *DatafileReader) parseConditionsIfStringified(conditions Condition) Condition {
+func (d *datafileReader) parseConditionsIfStringified(conditions Condition) Condition {
 	if conditionStr, ok := conditions.(string); ok {
 		if conditionStr == "*" {
 			return conditions
@@ -500,7 +517,7 @@ func (d *DatafileReader) parseConditionsIfStringified(conditions Condition) Cond
 }
 
 // parseSegmentsIfStringified parses segments if they are stringified
-func (d *DatafileReader) parseSegmentsIfStringified(segments interface{}) interface{} {
+func (d *datafileReader) parseSegmentsIfStringified(segments interface{}) interface{} {
 	if segmentStr, ok := segments.(string); ok {
 		if strings.HasPrefix(segmentStr, "{") || strings.HasPrefix(segmentStr, "[") {
 			var parsedSegments interface{}
@@ -520,7 +537,7 @@ func (d *DatafileReader) parseSegmentsIfStringified(segments interface{}) interf
 }
 
 // parseRequiredIfStringified parses required features if they are stringified
-func (d *DatafileReader) parseRequiredIfStringified(required []Required) []Required {
+func (d *datafileReader) parseRequiredIfStringified(required []Required) []Required {
 	parsedRequired := make([]Required, len(required))
 
 	for i, req := range required {

@@ -5,7 +5,7 @@ import "testing"
 func TestGetParamsForDatafileSetEventShape(t *testing.T) {
 	logger := NewLogger(CreateLoggerOptions{})
 
-	previousReader := NewDatafileReader(DatafileReaderOptions{
+	previousReader := newDatafileReader(datafileReaderOptions{
 		Logger: logger,
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
@@ -16,7 +16,7 @@ func TestGetParamsForDatafileSetEventShape(t *testing.T) {
 			},
 		},
 	})
-	newReader := NewDatafileReader(DatafileReaderOptions{
+	newReader := newDatafileReader(datafileReaderOptions{
 		Logger: logger,
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
