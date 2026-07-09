@@ -896,3 +896,34 @@ func TestGetAllEvaluations(t *testing.T) {
 		t.Error("Expected 'nonExistent' feature to be disabled")
 	}
 }
+
+func TestLifecycleMutationsReportDiagnostics(t *testing.T) {
+	logLevel := LogLevelDebug
+	diagnostics := []FeaturevisorDiagnostic{}
+	instance := CreateInstance(Options{
+		LogLevel: &logLevel,
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+	})
+
+	instance.SetDatafile(DatafileContent{
+		SchemaVersion: "2",
+		Revision:      "1",
+		Segments:      map[SegmentKey]Segment{},
+		Features:      map[FeatureKey]Feature{},
+	})
+	instance.SetSticky(StickyFeatures{"test": EvaluatedFeature{Enabled: true}})
+	instance.SetContext(Context{"country": "nl"})
+
+	codes := map[string]bool{}
+	for _, diagnostic := range diagnostics {
+		codes[diagnostic.Code] = true
+	}
+
+	for _, code := range []string{"datafile_set", "sticky_set", "context_set"} {
+		if !codes[code] {
+			t.Fatalf("expected %s diagnostic, got %#v", code, diagnostics)
+		}
+	}
+}

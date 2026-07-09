@@ -382,11 +382,20 @@ func (i *Featurevisor) SetContext(context Context, replace ...bool) {
 		"replaced": replaceValue,
 	})
 
+	message := "Context updated"
 	if replaceValue {
-		i.logger.Debug("context replaced", LogDetails{"context": i.context})
-	} else {
-		i.logger.Debug("context updated", LogDetails{"context": i.context})
+		message = "Context replaced"
 	}
+
+	i.reportDiagnostic(FeaturevisorDiagnostic{
+		Level:   LogLevelDebug,
+		Code:    "context_set",
+		Message: message,
+		Details: LogDetails{
+			"context":  i.context,
+			"replaced": replaceValue,
+		},
+	}, nil)
 }
 
 // GetContext returns the context
