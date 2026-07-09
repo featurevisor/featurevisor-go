@@ -7,10 +7,15 @@ import (
 
 // OverrideOptions contains options for overriding evaluation
 type OverrideOptions struct {
-	Sticky *StickyFeatures
+	sticky *StickyFeatures
 
 	DefaultVariationValue *VariationValue
 	DefaultVariableValue  VariableValue
+}
+
+// SpawnOptions configures a child SDK instance.
+type SpawnOptions struct {
+	Sticky *StickyFeatures
 }
 
 // Options contains options for creating an instance
@@ -262,6 +267,10 @@ func (i *Featurevisor) reportDiagnostic(
 	diagnostic FeaturevisorDiagnostic,
 	sourceModule *FeaturevisorModule,
 ) {
+	if diagnostic.Details == nil {
+		diagnostic.Details = map[string]interface{}{}
+	}
+
 	for _, subscription := range append([]moduleDiagnosticSubscription{}, i.moduleDiagnosticSubscriptions...) {
 		if subscription.module == sourceModule {
 			continue
@@ -420,14 +429,14 @@ func (i *Featurevisor) GetContext(context Context) Context {
 func (i *Featurevisor) Spawn(args ...interface{}) *FeaturevisorChild {
 	// Default values
 	contextValue := Context{}
-	optionsValue := OverrideOptions{}
+	optionsValue := SpawnOptions{}
 
 	// Parse variadic arguments
 	for _, arg := range args {
 		switch v := arg.(type) {
 		case Context:
 			contextValue = v
-		case OverrideOptions:
+		case SpawnOptions:
 			optionsValue = v
 		}
 	}
@@ -442,20 +451,8 @@ func (i *Featurevisor) Spawn(args ...interface{}) *FeaturevisorChild {
 // getEvaluationDependencies gets evaluation dependencies
 func (i *Featurevisor) getEvaluationDependencies(context Context, options OverrideOptions) EvaluateDependencies {
 	var sticky *StickyFeatures
-	if options.Sticky != nil {
-		if i.sticky != nil {
-			// Merge sticky features
-			mergedSticky := StickyFeatures{}
-			for key, value := range *i.sticky {
-				mergedSticky[key] = value
-			}
-			for key, value := range *options.Sticky {
-				mergedSticky[key] = value
-			}
-			sticky = &mergedSticky
-		} else {
-			sticky = options.Sticky
-		}
+	if options.sticky != nil {
+		sticky = options.sticky
 	} else {
 		sticky = i.sticky
 	}
@@ -465,7 +462,7 @@ func (i *Featurevisor) getEvaluationDependencies(context Context, options Overri
 		Logger:                i.logger,
 		ModulesManager:        i.modulesManager,
 		datafileReader:        i.datafileReader,
-		Sticky:                sticky,
+		sticky:                sticky,
 		DefaultVariationValue: options.DefaultVariationValue,
 		DefaultVariableValue:  options.DefaultVariableValue,
 	}

@@ -19,8 +19,8 @@ type EvaluateDependencies struct {
 	ModulesManager *ModulesManager
 	datafileReader *datafileReader
 
-	// OverrideOptions
-	Sticky *StickyFeatures
+	// Instance-internal sticky state. Consumers configure it on an instance.
+	sticky *StickyFeatures
 
 	DefaultVariationValue *VariationValue
 	DefaultVariableValue  VariableValue
@@ -139,8 +139,8 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	/**
 	 * Sticky
 	 */
-	if options.Sticky != nil {
-		if stickyFeature, exists := (*options.Sticky)[options.FeatureKey]; exists {
+	if options.sticky != nil {
+		if stickyFeature, exists := (*options.sticky)[options.FeatureKey]; exists {
 			// flag
 			if options.Type == EvaluationTypeFlag && stickyFeature.Enabled {
 				evaluation = Evaluation{

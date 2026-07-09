@@ -110,20 +110,8 @@ func (c *FeaturevisorChild) SetSticky(sticky StickyFeatures, replace ...bool) {
 // getEvaluationDependencies gets evaluation dependencies
 func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options OverrideOptions) EvaluateDependencies {
 	var sticky *StickyFeatures
-	if options.Sticky != nil {
-		if c.sticky != nil {
-			// Merge sticky features
-			mergedSticky := StickyFeatures{}
-			for key, value := range *c.sticky {
-				mergedSticky[key] = value
-			}
-			for key, value := range *options.Sticky {
-				mergedSticky[key] = value
-			}
-			sticky = &mergedSticky
-		} else {
-			sticky = options.Sticky
-		}
+	if options.sticky != nil {
+		sticky = options.sticky
 	} else {
 		sticky = c.sticky
 	}
@@ -133,7 +121,7 @@ func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options O
 		Logger:                c.parent.logger,
 		ModulesManager:        c.parent.modulesManager,
 		datafileReader:        c.parent.datafileReader,
-		Sticky:                sticky,
+		sticky:                sticky,
 		DefaultVariationValue: options.DefaultVariationValue,
 		DefaultVariableValue:  options.DefaultVariableValue,
 	}

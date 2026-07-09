@@ -316,6 +316,8 @@ This is handy especially when you want to pass all evaluations from a backend ap
 
 For the lifecycle of the SDK instance in your application, you can set some features with sticky values, meaning that they will not be evaluated against the fetched [datafile](https://featurevisor.com/docs/building-datafiles/):
 
+Sticky values belong to an SDK or child instance. Evaluation options do not accept sticky overrides; create a child with `SpawnOptions{Sticky: ...}` when a child needs its own sticky state.
+
 ### Initialize with sticky
 
 ```go
@@ -560,6 +562,8 @@ f := featurevisor.CreateInstance(featurevisor.Options{
 ```
 
 Modules can also subscribe to diagnostics or report their own from `Setup` via the provided module API.
+
+Every diagnostic has `Level`, `Code`, `Message`, and an object-shaped `Details` map. Optional `Module`, `ModuleName`, and `OriginalError` fields describe provenance; evaluation metadata belongs in `Details`.
 
 ## Events
 
