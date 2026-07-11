@@ -104,7 +104,29 @@ func (mm *ModulesManager) Add(module *FeaturevisorModule) FeaturevisorUnsubscrib
 	}
 
 	if module.Setup != nil && mm.getModuleApi != nil {
-		module.Setup(mm.getModuleApi(module))
+		setupFailed := false
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					setupFailed = true
+					if mm.clearModuleDiagnosticSubscriptions != nil {
+						mm.clearModuleDiagnosticSubscriptions(module)
+					}
+					mm.reportDiagnostic(FeaturevisorDiagnostic{
+						Level:         LogLevelError,
+						Code:          "module_setup_error",
+						Message:       "Module setup failed",
+						ModuleName:    module.Name,
+						OriginalError: recovered,
+					}, nil)
+					mm.closeModule(module)
+				}
+			}()
+			module.Setup(mm.getModuleApi(module))
+		}()
+		if setupFailed {
+			return nil
+		}
 	}
 
 	mm.modules = append(mm.modules, module)

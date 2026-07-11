@@ -3,8 +3,8 @@ package featurevisor
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
-	"strconv"
 )
 
 // GetValueByType converts a value to the specified type
@@ -22,30 +22,29 @@ func GetValueByType(value interface{}, fieldType string) interface{} {
 		return nil
 	case "integer":
 		switch v := value.(type) {
-		case string:
-			if n, err := strconv.Atoi(v); err == nil {
-				return n
-			}
 		case int:
 			return v
 		case float64:
-			return int(v)
+			if !math.IsNaN(v) && !math.IsInf(v, 0) && math.Trunc(v) == v {
+				return int(v)
+			}
 		}
 		return nil
 	case "double":
 		switch v := value.(type) {
-		case string:
-			if n, err := strconv.ParseFloat(v, 64); err == nil {
-				return n
-			}
 		case float64:
-			return v
+			if !math.IsNaN(v) && !math.IsInf(v, 0) {
+				return v
+			}
 		case int:
 			return float64(v)
 		}
 		return nil
 	case "boolean":
-		return value == true
+		if booleanValue, ok := value.(bool); ok {
+			return booleanValue
+		}
+		return nil
 	case "array":
 		if arr, ok := value.([]interface{}); ok {
 			return arr

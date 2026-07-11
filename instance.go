@@ -278,12 +278,26 @@ func (i *Featurevisor) reportDiagnostic(
 		if !shouldLogDiagnostic(subscription.logLevel, diagnostic.Level) {
 			continue
 		}
-		subscription.handler(diagnostic)
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					_ = recovered
+				}
+			}()
+			subscription.handler(diagnostic)
+		}()
 	}
 
 	if shouldLogDiagnostic(i.logLevel, diagnostic.Level) {
 		if i.onDiagnostic != nil {
-			i.onDiagnostic(diagnostic)
+			func() {
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						_ = recovered
+					}
+				}()
+				i.onDiagnostic(diagnostic)
+			}()
 		} else {
 			details := LogDetails{}
 			if diagnostic.Details != nil {
@@ -819,11 +833,6 @@ func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, 
 	}
 
 	return result
-}
-
-// CreateInstance creates a new Featurevisor instance
-func CreateInstance(options Options) *Featurevisor {
-	return NewFeaturevisor(options)
 }
 
 func mergeStoredDatafile(existing DatafileContent, incoming DatafileContent) DatafileContent {

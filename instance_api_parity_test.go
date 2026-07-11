@@ -3,7 +3,7 @@ package featurevisor
 import "testing"
 
 func TestSetDatafileAcceptsJSONString(t *testing.T) {
-	instance := CreateInstance(Options{})
+	instance := NewFeaturevisor(Options{})
 	instance.SetDatafile(`{
 		"schemaVersion": "2",
 		"revision": "json-revision",
@@ -17,7 +17,7 @@ func TestSetDatafileAcceptsJSONString(t *testing.T) {
 }
 
 func TestInstanceOnReturnsUnsubscribe(t *testing.T) {
-	instance := CreateInstance(Options{})
+	instance := NewFeaturevisor(Options{})
 	calls := 0
 
 	unsubscribe := instance.On(EventNameContextSet, func(details EventDetails) {

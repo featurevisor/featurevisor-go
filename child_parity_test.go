@@ -3,7 +3,7 @@ package featurevisor
 import "testing"
 
 func TestChildEventIsolationAndProxying(t *testing.T) {
-	instance := CreateInstance(Options{
+	instance := NewFeaturevisor(Options{
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
 			Revision:      "1",

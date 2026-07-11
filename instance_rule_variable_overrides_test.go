@@ -82,7 +82,7 @@ func TestRuleVariableOverridesParity(t *testing.T) {
 		t.Fatalf("failed to parse datafile: %v", err)
 	}
 
-	sdk := CreateInstance(Options{Datafile: datafile})
+	sdk := NewFeaturevisor(Options{Datafile: datafile})
 
 	// first matching rule override by segments should win (index 0)
 	evaluation := sdk.EvaluateVariable("test", "config", Context{
@@ -208,7 +208,7 @@ func TestVariationVariableOverrideReasonSplit(t *testing.T) {
 		t.Fatalf("failed to parse datafile: %v", err)
 	}
 
-	sdk := CreateInstance(Options{Datafile: datafile})
+	sdk := NewFeaturevisor(Options{Datafile: datafile})
 	evaluation := sdk.EvaluateVariable("test", "color", Context{
 		"userId":  "user-1",
 		"country": "de",

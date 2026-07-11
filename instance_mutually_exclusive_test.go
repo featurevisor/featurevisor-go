@@ -33,7 +33,7 @@ func TestMutuallyExclusiveFeatures(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk := CreateInstance(Options{
+	sdk := NewFeaturevisor(Options{
 		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",

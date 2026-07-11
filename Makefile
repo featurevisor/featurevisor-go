@@ -5,7 +5,7 @@ build:
 	go build -o build/featurevisor-go cmd/main.go
 
 test:
-	go test ./... -v
+	go test ./...
 
 test-example-1:
 	go test ./...

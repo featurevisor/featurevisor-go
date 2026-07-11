@@ -99,7 +99,7 @@ func main() {
         panic(err)
     }
 
-    f := featurevisor.CreateInstance(featurevisor.Options{
+    f := featurevisor.NewFeaturevisor(featurevisor.Options{
         Datafile: datafileContent,
     })
 }
@@ -142,7 +142,7 @@ import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-f := featurevisor.CreateInstance(featurevisor.Options{
+f := featurevisor.NewFeaturevisor(featurevisor.Options{
     Context: featurevisor.Context{
         "deviceId": "123",
         "country":  "nl",
@@ -274,6 +274,8 @@ f.GetVariableObject(featureKey, variableKey, context)
 f.GetVariableJSON(featureKey, variableKey, context)
 ```
 
+Type specific methods do not coerce values. `GetVariableInteger()` returns `nil` for the string `"1"`, and `GetVariableBoolean()` returns `nil` for the string `"true"`.
+
 For typed arrays/objects, use `Into` methods with pointer outputs:
 
 ```go
@@ -325,7 +327,7 @@ import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-f := featurevisor.CreateInstance(featurevisor.Options{
+f := featurevisor.NewFeaturevisor(featurevisor.Options{
     Sticky: &featurevisor.StickyFeatures{
         "myFeatureKey": {
             Enabled: true,
@@ -404,7 +406,7 @@ Because merging is the default, a single SDK instance can start with a small dat
 This pairs well with [targets](https://featurevisor.com/docs/targets/), where each target produces a smaller datafile for a specific part of your application:
 
 ```go
-f := featurevisor.CreateInstance(featurevisor.Options{})
+f := featurevisor.NewFeaturevisor(featurevisor.Options{})
 
 func loadDatafile(target string) {
     url := fmt.Sprintf("https://cdn.yoursite.com/production/featurevisor-%s.json", target)
@@ -506,7 +508,7 @@ import (
 )
 
 logLevel := featurevisor.LogLevelDebug
-f := featurevisor.CreateInstance(featurevisor.Options{
+f := featurevisor.NewFeaturevisor(featurevisor.Options{
     LogLevel: &logLevel,
 })
 ```
@@ -515,7 +517,7 @@ Alternatively, you can also set `logLevel` directly:
 
 ```go
 logLevel := featurevisor.LogLevelDebug
-f := featurevisor.CreateInstance(featurevisor.Options{
+f := featurevisor.NewFeaturevisor(featurevisor.Options{
     LogLevel: &logLevel,
 })
 ```
@@ -542,7 +544,7 @@ logger := featurevisor.NewLogger(featurevisor.CreateLoggerOptions{
     },
 })
 
-f := featurevisor.CreateInstance(featurevisor.Options{
+f := featurevisor.NewFeaturevisor(featurevisor.Options{
     Logger: logger,
 })
 ```
@@ -554,7 +556,7 @@ Further log levels like `info` and `debug` will help you understand how the feat
 You can observe SDK and module diagnostics with `OnDiagnostic`:
 
 ```go
-f := featurevisor.CreateInstance(featurevisor.Options{
+f := featurevisor.NewFeaturevisor(featurevisor.Options{
     OnDiagnostic: func(diagnostic featurevisor.FeaturevisorDiagnostic) {
         fmt.Println(diagnostic.Level, diagnostic.Code, diagnostic.Message)
     },
@@ -564,6 +566,8 @@ f := featurevisor.CreateInstance(featurevisor.Options{
 Modules can also subscribe to diagnostics or report their own from `Setup` via the provided module API.
 
 Every diagnostic has `Level`, `Code`, `Message`, and an object-shaped `Details` map. Optional `Module`, `ModuleName`, and `OriginalError` fields describe provenance; evaluation metadata belongs in `Details`.
+
+Diagnostic handlers are isolated from SDK behavior. A panic in a handler does not stop other handlers or evaluations.
 
 ## Events
 
@@ -670,6 +674,8 @@ Modules allow you to intercept the evaluation process and customize it further a
 
 A module is a simple struct with a recommended unique `Name` and optional functions:
 
+If `Setup` panics, the module is not registered. Featurevisor removes subscriptions created during setup, reports `module_setup_error`, and calls `Close` when present.
+
 ```go
 import (
     "github.com/featurevisor/featurevisor-go"
@@ -734,7 +740,7 @@ import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-f := featurevisor.CreateInstance(featurevisor.Options{
+f := featurevisor.NewFeaturevisor(featurevisor.Options{
     Modules: []*featurevisor.FeaturevisorModule{
         myCustomModule,
     },

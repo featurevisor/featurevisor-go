@@ -795,7 +795,7 @@ func buildInstanceForAssertion(datafile interface{}, level string, assertion map
 	}
 
 	levelStr := featurevisor.LogLevel(level)
-	return featurevisor.CreateInstance(featurevisor.Options{
+	return featurevisor.NewFeaturevisor(featurevisor.Options{
 		Datafile: datafileContent,
 		LogLevel: &levelStr,
 		Modules: []*featurevisor.FeaturevisorModule{

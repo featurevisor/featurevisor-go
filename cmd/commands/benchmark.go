@@ -182,7 +182,7 @@ func runBenchmark(opts CLIOptions) {
 	datafileSize := len(datafileBytes)
 	fmt.Printf("Datafile size: %.2f kB\n", float64(datafileSize)/1024.0)
 
-	instance := featurevisor.CreateInstance(featurevisor.Options{
+	instance := featurevisor.NewFeaturevisor(featurevisor.Options{
 		Datafile: datafileContent,
 		LogLevel: &level,
 	})
