@@ -19,10 +19,10 @@ type BucketValue = int
 
 // GetBucketKeyOptions contains options for getting a bucket key
 type GetBucketKeyOptions struct {
-	FeatureKey FeatureKey
-	BucketBy   BucketBy
-	Context    Context
-	Logger     *Logger
+	FeatureKey         FeatureKey
+	BucketBy           BucketBy
+	Context            Context
+	featurevisorLogger *featurevisorLogger
 }
 
 // DEFAULT_BUCKET_KEY_SEPARATOR is the default separator for bucket keys
@@ -41,7 +41,7 @@ func GetBucketKey(options GetBucketKeyOptions) BucketKey {
 	featureKey := options.FeatureKey
 	bucketBy := options.BucketBy
 	context := options.Context
-	logger := options.Logger
+	logger := options.featurevisorLogger
 
 	var bucketType string
 	var attributeKeys []string
@@ -90,7 +90,7 @@ func GetBucketKey(options GetBucketKeyOptions) BucketKey {
 			}
 		}
 	default:
-		logger.Error("invalid bucketBy", LogDetails{
+		logger.Error("invalid bucketBy", logDetails{
 			"featureKey": featureKey,
 			"bucketBy":   bucketBy,
 		})

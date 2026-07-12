@@ -49,25 +49,25 @@ func getModuleName(module *FeaturevisorModule) string {
 	return module.Name
 }
 
-// ModulesManagerOptions contains options for creating a modules manager.
-type ModulesManagerOptions struct {
+// modulesManagerOptions contains options for creating a modules manager.
+type modulesManagerOptions struct {
 	Modules                            []*FeaturevisorModule
 	ReportDiagnostic                   FeaturevisorDiagnosticReporter
 	GetModuleApi                       func(module *FeaturevisorModule) FeaturevisorModuleApi
 	ClearModuleDiagnosticSubscriptions func(module *FeaturevisorModule)
 }
 
-// ModulesManager manages Featurevisor modules.
-type ModulesManager struct {
+// modulesManager manages Featurevisor modules.
+type modulesManager struct {
 	modules                            []*FeaturevisorModule
 	reportDiagnostic                   FeaturevisorDiagnosticReporter
 	getModuleApi                       func(module *FeaturevisorModule) FeaturevisorModuleApi
 	clearModuleDiagnosticSubscriptions func(module *FeaturevisorModule)
 }
 
-// NewModulesManager creates a new modules manager instance.
-func NewModulesManager(options ModulesManagerOptions) *ModulesManager {
-	mm := &ModulesManager{
+// newModulesManager creates a new modules manager instance.
+func newModulesManager(options modulesManagerOptions) *modulesManager {
+	mm := &modulesManager{
 		modules:                            make([]*FeaturevisorModule, 0),
 		reportDiagnostic:                   options.ReportDiagnostic,
 		getModuleApi:                       options.GetModuleApi,
@@ -84,7 +84,7 @@ func NewModulesManager(options ModulesManagerOptions) *ModulesManager {
 }
 
 // Add adds a module to the modules manager.
-func (mm *ModulesManager) Add(module *FeaturevisorModule) FeaturevisorUnsubscribe {
+func (mm *modulesManager) Add(module *FeaturevisorModule) FeaturevisorUnsubscribe {
 	if module == nil {
 		return nil
 	}
@@ -152,7 +152,7 @@ func (mm *ModulesManager) Add(module *FeaturevisorModule) FeaturevisorUnsubscrib
 	}
 }
 
-func (mm *ModulesManager) closeModule(module *FeaturevisorModule) {
+func (mm *modulesManager) closeModule(module *FeaturevisorModule) {
 	if module == nil || module.Close == nil {
 		return
 	}
@@ -173,7 +173,7 @@ func (mm *ModulesManager) closeModule(module *FeaturevisorModule) {
 }
 
 // Remove removes modules by name.
-func (mm *ModulesManager) Remove(name string) {
+func (mm *modulesManager) Remove(name string) {
 	removedModules := []*FeaturevisorModule{}
 	keptModules := []*FeaturevisorModule{}
 
@@ -199,12 +199,12 @@ func (mm *ModulesManager) Remove(name string) {
 }
 
 // GetAll returns all modules.
-func (mm *ModulesManager) GetAll() []*FeaturevisorModule {
+func (mm *modulesManager) GetAll() []*FeaturevisorModule {
 	return mm.modules
 }
 
 // CloseAll closes and removes all modules.
-func (mm *ModulesManager) CloseAll() {
+func (mm *modulesManager) CloseAll() {
 	modules := append([]*FeaturevisorModule{}, mm.modules...)
 	mm.modules = []*FeaturevisorModule{}
 

@@ -42,7 +42,7 @@ func TestGetBucketedNumber(t *testing.T) {
 }
 
 func TestGetBucketKey(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
 	t.Run("plain: should return a bucket key for a plain bucketBy", func(t *testing.T) {
 		featureKey := FeatureKey("test-feature")
@@ -53,10 +53,10 @@ func TestGetBucketKey(t *testing.T) {
 		}
 
 		bucketKey := GetBucketKey(GetBucketKeyOptions{
-			FeatureKey: featureKey,
-			BucketBy:   bucketBy,
-			Context:    context,
-			Logger:     logger,
+			FeatureKey:         featureKey,
+			BucketBy:           bucketBy,
+			Context:            context,
+			featurevisorLogger: logger,
 		})
 
 		expected := "123.test-feature"
@@ -73,10 +73,10 @@ func TestGetBucketKey(t *testing.T) {
 		}
 
 		bucketKey := GetBucketKey(GetBucketKeyOptions{
-			FeatureKey: featureKey,
-			BucketBy:   bucketBy,
-			Context:    context,
-			Logger:     logger,
+			FeatureKey:         featureKey,
+			BucketBy:           bucketBy,
+			Context:            context,
+			featurevisorLogger: logger,
 		})
 
 		expected := "test-feature"
@@ -95,10 +95,10 @@ func TestGetBucketKey(t *testing.T) {
 		}
 
 		bucketKey := GetBucketKey(GetBucketKeyOptions{
-			FeatureKey: featureKey,
-			BucketBy:   bucketBy,
-			Context:    context,
-			Logger:     logger,
+			FeatureKey:         featureKey,
+			BucketBy:           bucketBy,
+			Context:            context,
+			featurevisorLogger: logger,
 		})
 
 		expected := "123.234.test-feature"
@@ -116,10 +116,10 @@ func TestGetBucketKey(t *testing.T) {
 		}
 
 		bucketKey := GetBucketKey(GetBucketKeyOptions{
-			FeatureKey: featureKey,
-			BucketBy:   bucketBy,
-			Context:    context,
-			Logger:     logger,
+			FeatureKey:         featureKey,
+			BucketBy:           bucketBy,
+			Context:            context,
+			featurevisorLogger: logger,
 		})
 
 		expected := "123.test-feature"
@@ -140,10 +140,10 @@ func TestGetBucketKey(t *testing.T) {
 		}
 
 		bucketKey := GetBucketKey(GetBucketKeyOptions{
-			FeatureKey: featureKey,
-			BucketBy:   bucketBy,
-			Context:    context,
-			Logger:     logger,
+			FeatureKey:         featureKey,
+			BucketBy:           bucketBy,
+			Context:            context,
+			featurevisorLogger: logger,
 		})
 
 		expected := "123.234.test-feature"
@@ -164,10 +164,10 @@ func TestGetBucketKey(t *testing.T) {
 		}
 
 		bucketKey := GetBucketKey(GetBucketKeyOptions{
-			FeatureKey: featureKey,
-			BucketBy:   bucketBy,
-			Context:    context,
-			Logger:     logger,
+			FeatureKey:         featureKey,
+			BucketBy:           bucketBy,
+			Context:            context,
+			featurevisorLogger: logger,
 		})
 
 		expected := "234.test-feature"
@@ -187,10 +187,10 @@ func TestGetBucketKey(t *testing.T) {
 		}
 
 		bucketKey := GetBucketKey(GetBucketKeyOptions{
-			FeatureKey: featureKey,
-			BucketBy:   bucketBy,
-			Context:    context,
-			Logger:     logger,
+			FeatureKey:         featureKey,
+			BucketBy:           bucketBy,
+			Context:            context,
+			featurevisorLogger: logger,
 		})
 
 		expected := "deviceIdHere.test-feature"
@@ -212,10 +212,10 @@ func TestGetBucketKey(t *testing.T) {
 		}()
 
 		GetBucketKey(GetBucketKeyOptions{
-			FeatureKey: featureKey,
-			BucketBy:   bucketBy,
-			Context:    context,
-			Logger:     logger,
+			FeatureKey:         featureKey,
+			BucketBy:           bucketBy,
+			Context:            context,
+			featurevisorLogger: logger,
 		})
 	})
 }

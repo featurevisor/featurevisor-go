@@ -6,8 +6,8 @@ import (
 )
 
 func TestCreateInstance(t *testing.T) {
-	// Test that NewFeaturevisor is a function
-	instance := NewFeaturevisor(Options{})
+	// Test that CreateFeaturevisor is a function
+	instance := CreateFeaturevisor(FeaturevisorOptions{})
 	if instance == nil {
 		t.Fatal("Expected instance to be created")
 	}
@@ -25,7 +25,7 @@ func TestCreateInstance(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance = NewFeaturevisor(Options{
+	instance = CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 	})
 
@@ -78,7 +78,7 @@ func TestPlainBucketBy(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 		Modules: []*FeaturevisorModule{
 			{
@@ -142,7 +142,7 @@ func TestAndBucketBy(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 		Modules: []*FeaturevisorModule{
 			{
@@ -207,7 +207,7 @@ func TestOrBucketBy(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 		Modules: []*FeaturevisorModule{
 			{
@@ -288,7 +288,7 @@ func TestBeforeModule(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 		Modules: []*FeaturevisorModule{
 			{
@@ -362,7 +362,7 @@ func TestAfterModule(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 		Modules: []*FeaturevisorModule{
 			{
@@ -414,7 +414,7 @@ func TestModulesSetupDiagnosticsAndClose(t *testing.T) {
 	var moduleSawDatafileSet bool
 	var diagnostics []FeaturevisorDiagnostic
 
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
 			Revision:      "module-test",
@@ -494,7 +494,7 @@ func TestModuleSetupFailureIsIsolated(t *testing.T) {
 	var diagnostics []FeaturevisorDiagnostic
 	closed := 0
 	logLevel := LogLevelError
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		LogLevel: &logLevel,
 		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
 			diagnostics = append(diagnostics, diagnostic)
@@ -530,7 +530,7 @@ func TestModuleSetupFailureIsIsolated(t *testing.T) {
 func TestDiagnosticHandlerPanicsAreIsolated(t *testing.T) {
 	seen := 0
 	logLevel := LogLevelDebug
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		LogLevel: &logLevel,
 		OnDiagnostic: func(FeaturevisorDiagnostic) {
 			panic("broken root handler")
@@ -553,7 +553,7 @@ func TestDiagnosticHandlerPanicsAreIsolated(t *testing.T) {
 
 func TestRemovedModulesAreClosed(t *testing.T) {
 	closed := []string{}
-	instance := NewFeaturevisor(Options{})
+	instance := CreateFeaturevisor(FeaturevisorOptions{})
 
 	unsubscribe := instance.AddModule(&FeaturevisorModule{
 		Name: "dynamic",
@@ -587,7 +587,7 @@ func TestModuleCloseErrorsAreReportedAndDoNotStopCleanup(t *testing.T) {
 	var errorEvents []FeaturevisorDiagnostic
 	closed := []string{}
 
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
 			diagnostics = append(diagnostics, diagnostic)
 		},
@@ -647,7 +647,7 @@ func TestModuleCloseErrorsAreReportedAndDoNotStopCleanup(t *testing.T) {
 
 func TestModuleUnsubscribeReportsCloseErrors(t *testing.T) {
 	var diagnostics []FeaturevisorDiagnostic
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
 			diagnostics = append(diagnostics, diagnostic)
 		},
@@ -679,7 +679,7 @@ func TestModuleUnsubscribeReportsCloseErrors(t *testing.T) {
 }
 
 func TestSetDatafileMergesByDefaultAndReplacesWhenRequested(t *testing.T) {
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
 			Revision:      "1",
@@ -817,7 +817,7 @@ func TestGetAllEvaluations(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 	})
 
@@ -961,7 +961,7 @@ func TestGetAllEvaluations(t *testing.T) {
 func TestLifecycleMutationsReportDiagnostics(t *testing.T) {
 	logLevel := LogLevelDebug
 	diagnostics := []FeaturevisorDiagnostic{}
-	instance := NewFeaturevisor(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		LogLevel: &logLevel,
 		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
 			diagnostics = append(diagnostics, diagnostic)

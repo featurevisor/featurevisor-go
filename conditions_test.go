@@ -315,7 +315,7 @@ func TestConditionIsMatchedDate(t *testing.T) {
 
 // TestConditionIsMatchedComprehensive tests all operators comprehensively
 func TestConditionIsMatchedComprehensive(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -329,8 +329,8 @@ func TestConditionIsMatchedComprehensive(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	// Test wildcard conditions
@@ -855,7 +855,7 @@ func TestConditionIsMatchedEdgeCases(t *testing.T) {
 }
 
 func TestConditionIsMatchedComplexNested(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -869,8 +869,8 @@ func TestConditionIsMatchedComplexNested(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	// Test complex nested conditions similar to TypeScript tests

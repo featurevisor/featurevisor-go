@@ -16,26 +16,26 @@ const (
 	LogLevelDebug LogLevel = "debug"
 )
 
-// LogMessage represents a log message string
-type LogMessage string
+// logMessage represents a log message string
+type logMessage string
 
-// LogDetails represents additional details for logging
-type LogDetails map[string]interface{}
+// logDetails represents additional details for logging
+type logDetails map[string]interface{}
 
-// LogHandler is a function type for handling log messages
-type LogHandler func(level LogLevel, message LogMessage, details LogDetails)
+// logHandler is a function type for handling log messages
+type logHandler func(level LogLevel, message logMessage, details logDetails)
 
-// CreateLoggerOptions contains options for creating a logger
-type CreateLoggerOptions struct {
+// loggerOptions contains options for creating a logger
+type loggerOptions struct {
 	Level   *LogLevel
-	Handler *LogHandler
+	Handler *logHandler
 }
 
-// LoggerPrefix is the prefix used for all log messages
-const LoggerPrefix = "[Featurevisor]"
+// loggerPrefix is the prefix used for all log messages
+const loggerPrefix = "[Featurevisor]"
 
-// DefaultLogHandler is the default logging handler
-func DefaultLogHandler(level LogLevel, message LogMessage, details LogDetails) {
+// defaultLogHandler is the default logging handler
+func defaultLogHandler(level LogLevel, message logMessage, details logDetails) {
 	var method string
 
 	switch level {
@@ -52,7 +52,7 @@ func DefaultLogHandler(level LogLevel, message LogMessage, details LogDetails) {
 	}
 
 	// Format the log message
-	logMessage := fmt.Sprintf("%s %s: %s", LoggerPrefix, method, message)
+	logMessage := fmt.Sprintf("%s %s: %s", loggerPrefix, method, message)
 
 	// Add details if provided
 	if len(details) > 0 {
@@ -62,7 +62,7 @@ func DefaultLogHandler(level LogLevel, message LogMessage, details LogDetails) {
 	// Use appropriate log level
 	switch level {
 	case LogLevelFatal:
-		log.Fatal(logMessage)
+		log.Printf("[FATAL] %s", logMessage)
 	case LogLevelError:
 		log.Printf("[ERROR] %s", logMessage)
 	case LogLevelWarn:
@@ -76,14 +76,14 @@ func DefaultLogHandler(level LogLevel, message LogMessage, details LogDetails) {
 	}
 }
 
-// Logger provides logging functionality
-type Logger struct {
+// featurevisorLogger provides logging functionality
+type featurevisorLogger struct {
 	level  LogLevel
-	handle LogHandler
+	handle logHandler
 }
 
-// AllLevels contains all available log levels in order of severity
-var AllLevels = []LogLevel{
+// allLevels contains all available log levels in order of severity
+var allLevels = []LogLevel{
 	LogLevelFatal,
 	LogLevelError,
 	LogLevelWarn,
@@ -91,44 +91,44 @@ var AllLevels = []LogLevel{
 	LogLevelDebug, // not enabled by default
 }
 
-// DefaultLevel is the default logging level
-var DefaultLevel = LogLevelInfo
+// defaultLevel is the default logging level
+var defaultLevel = LogLevelInfo
 
-// NewLogger creates a new logger instance
-func NewLogger(options CreateLoggerOptions) *Logger {
-	level := DefaultLevel
+// newLogger creates a new logger instance
+func newLogger(options loggerOptions) *featurevisorLogger {
+	level := defaultLevel
 	if options.Level != nil {
 		level = *options.Level
 	}
 
-	handler := DefaultLogHandler
+	handler := defaultLogHandler
 	if options.Handler != nil {
 		handler = *options.Handler
 	}
 
-	return &Logger{
+	return &featurevisorLogger{
 		level:  level,
 		handle: handler,
 	}
 }
 
 // SetLevel sets the logging level
-func (l *Logger) SetLevel(level LogLevel) {
+func (l *featurevisorLogger) SetLevel(level LogLevel) {
 	l.level = level
 }
 
 // GetLevel returns the current logging level
-func (l *Logger) GetLevel() LogLevel {
+func (l *featurevisorLogger) GetLevel() LogLevel {
 	return l.level
 }
 
 // shouldHandle checks if a log level should be handled based on current level
-func (l *Logger) shouldHandle(level LogLevel) bool {
+func (l *featurevisorLogger) shouldHandle(level LogLevel) bool {
 	currentIndex := -1
 	targetIndex := -1
 
 	// Find indices of current and target levels
-	for i, logLevel := range AllLevels {
+	for i, logLevel := range allLevels {
 		if logLevel == l.level {
 			currentIndex = i
 		}
@@ -147,44 +147,39 @@ func (l *Logger) shouldHandle(level LogLevel) bool {
 }
 
 // Log logs a message at the specified level
-func (l *Logger) Log(level LogLevel, message LogMessage, details LogDetails) {
+func (l *featurevisorLogger) Log(level LogLevel, message logMessage, details logDetails) {
 	if !l.shouldHandle(level) {
 		return
 	}
 
 	if details == nil {
-		details = make(LogDetails)
+		details = make(logDetails)
 	}
 
 	l.handle(level, message, details)
 }
 
 // Debug logs a debug message
-func (l *Logger) Debug(message LogMessage, details LogDetails) {
+func (l *featurevisorLogger) Debug(message logMessage, details logDetails) {
 	l.Log(LogLevelDebug, message, details)
 }
 
 // Info logs an info message
-func (l *Logger) Info(message LogMessage, details LogDetails) {
+func (l *featurevisorLogger) Info(message logMessage, details logDetails) {
 	l.Log(LogLevelInfo, message, details)
 }
 
 // Warn logs a warning message
-func (l *Logger) Warn(message LogMessage, details LogDetails) {
+func (l *featurevisorLogger) Warn(message logMessage, details logDetails) {
 	l.Log(LogLevelWarn, message, details)
 }
 
 // Error logs an error message
-func (l *Logger) Error(message LogMessage, details LogDetails) {
+func (l *featurevisorLogger) Error(message logMessage, details logDetails) {
 	l.Log(LogLevelError, message, details)
 }
 
 // Fatal logs a fatal message and exits
-func (l *Logger) Fatal(message LogMessage, details LogDetails) {
+func (l *featurevisorLogger) Fatal(message logMessage, details logDetails) {
 	l.Log(LogLevelFatal, message, details)
-}
-
-// CreateLogger creates a new logger with the given options
-func CreateLogger(options CreateLoggerOptions) *Logger {
-	return NewLogger(options)
 }

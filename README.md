@@ -9,6 +9,7 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
 ## Table of contents <!-- omit in toc -->
 
 - [Installation](#installation)
+- [Public API](#public-api)
 - [Initialization](#initialization)
 - [Evaluation types](#evaluation-types)
 - [Context](#context)
@@ -30,11 +31,9 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
   - [Loading datafiles on demand](#loading-datafiles-on-demand)
   - [Updating datafile](#updating-datafile)
   - [Interval-based update](#interval-based-update)
-- [Logging](#logging)
-  - [Levels](#levels)
-  - [Customizing levels](#customizing-levels)
-  - [Handler](#handler)
 - [Diagnostics](#diagnostics)
+  - [Levels](#levels)
+  - [Handler](#handler)
 - [Events](#events)
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
@@ -65,6 +64,18 @@ In your Go application, install the SDK using Go modules:
 ```bash
 go get github.com/featurevisor/featurevisor-go
 ```
+
+## Public API
+
+The main runtime API is `featurevisor.CreateFeaturevisor()`:
+
+```go
+f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
+    Datafile: datafileContent,
+})
+```
+
+Most applications only need `CreateFeaturevisor`, the `Featurevisor` instance type, and `FeaturevisorOptions`. Public extension and observability types include `FeaturevisorModule`, `FeaturevisorDiagnostic`, and the datafile model types.
 
 ## Initialization
 
@@ -99,7 +110,7 @@ func main() {
         panic(err)
     }
 
-    f := featurevisor.NewFeaturevisor(featurevisor.Options{
+    f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
         Datafile: datafileContent,
     })
 }
@@ -142,7 +153,7 @@ import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-f := featurevisor.NewFeaturevisor(featurevisor.Options{
+f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
     Context: featurevisor.Context{
         "deviceId": "123",
         "country":  "nl",
@@ -327,7 +338,7 @@ import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-f := featurevisor.NewFeaturevisor(featurevisor.Options{
+f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
     Sticky: &featurevisor.StickyFeatures{
         "myFeatureKey": {
             Enabled: true,
@@ -406,7 +417,7 @@ Because merging is the default, a single SDK instance can start with a small dat
 This pairs well with [targets](https://featurevisor.com/docs/targets/), where each target produces a smaller datafile for a specific part of your application:
 
 ```go
-f := featurevisor.NewFeaturevisor(featurevisor.Options{})
+f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{})
 
 func loadDatafile(target string) {
     url := fmt.Sprintf("https://cdn.yoursite.com/production/featurevisor-%s.json", target)
@@ -483,80 +494,32 @@ func updateDatafile(f *featurevisor.Featurevisor, datafileURL string) {
 go updateDatafile(f, datafileURL)
 ```
 
-## Logging
+## Diagnostics
 
-By default, Featurevisor SDKs will print out logs to the console for `info` level and above.
+By default, Featurevisor reports diagnostics to the console for `info` level and above with a `[Featurevisor]` prefix.
 
 ### Levels
 
-These are all the available log levels:
+Available diagnostic levels are `fatal`, `error`, `warn`, `info`, and `debug`.
 
-- `error`
-- `warn`
-- `info`
-- `debug`
-
-### Customizing levels
-
-If you choose `debug` level to make the logs more verbose, you can set it at the time of SDK initialization.
-
-Setting `debug` level will print out all logs, including `info`, `warn`, and `error` levels.
-
-```go
-import (
-    "github.com/featurevisor/featurevisor-go"
-)
-
-logLevel := featurevisor.LogLevelDebug
-f := featurevisor.NewFeaturevisor(featurevisor.Options{
-    LogLevel: &logLevel,
-})
-```
-
-Alternatively, you can also set `logLevel` directly:
+Set the level during initialization or update it afterwards:
 
 ```go
 logLevel := featurevisor.LogLevelDebug
-f := featurevisor.NewFeaturevisor(featurevisor.Options{
+f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
     LogLevel: &logLevel,
 })
-```
 
-You can also set log level from SDK instance afterwards:
-
-```go
-f.SetLogLevel(featurevisor.LogLevelDebug)
+f.SetLogLevel(featurevisor.LogLevelInfo)
 ```
 
 ### Handler
 
-You can also pass your own log handler, if you do not wish to print the logs to the console:
+Use `OnDiagnostic` to send structured diagnostics to your observability system:
 
 ```go
-import (
-    "github.com/featurevisor/featurevisor-go"
-)
-
-logger := featurevisor.NewLogger(featurevisor.CreateLoggerOptions{
-    Level: &featurevisor.LogLevelInfo,
-    Handler: func(level featurevisor.LogLevel, message string, details interface{}) {
-        // do something with the log
-    },
-})
-
-f := featurevisor.NewFeaturevisor(featurevisor.Options{
-    Logger: logger,
-})
-```
-
-Further log levels like `info` and `debug` will help you understand how the feature variations and variables are evaluated in the runtime against given context.
-
-## Diagnostics
-
-You can observe SDK and module diagnostics with `OnDiagnostic`:
-
-```go
-f := featurevisor.NewFeaturevisor(featurevisor.Options{
+f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
+    LogLevel: &logLevel,
     OnDiagnostic: func(diagnostic featurevisor.FeaturevisorDiagnostic) {
         fmt.Println(diagnostic.Level, diagnostic.Code, diagnostic.Message)
     },
@@ -565,9 +528,10 @@ f := featurevisor.NewFeaturevisor(featurevisor.Options{
 
 Modules can also subscribe to diagnostics or report their own from `Setup` via the provided module API.
 
-Every diagnostic has `Level`, `Code`, `Message`, and an object-shaped `Details` map. Optional `Module`, `ModuleName`, and `OriginalError` fields describe provenance; evaluation metadata belongs in `Details`.
+Every diagnostic has `Level`, `Code`, `Message`, and an object-shaped `Details` map. Optional `Module`, `ModuleName`, and `OriginalError` fields describe provenance. Evaluation metadata belongs in `Details`.
 
 Diagnostic handlers are isolated from SDK behavior. A panic in a handler does not stop other handlers or evaluations.
+
 
 ## Events
 
@@ -740,7 +704,7 @@ import (
     "github.com/featurevisor/featurevisor-go"
 )
 
-f := featurevisor.NewFeaturevisor(featurevisor.Options{
+f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
     Modules: []*featurevisor.FeaturevisorModule{
         myCustomModule,
     },

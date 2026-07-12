@@ -14,16 +14,16 @@ type FeaturevisorChild struct {
 	parent  *Featurevisor
 	context Context
 	sticky  *StickyFeatures
-	emitter *Emitter
+	emitter *emitter
 }
 
-// NewFeaturevisorChild creates a new child instance
-func NewFeaturevisorChild(options ChildOptions) *FeaturevisorChild {
+// newFeaturevisorChild creates a new child instance.
+func newFeaturevisorChild(options ChildOptions) *FeaturevisorChild {
 	return &FeaturevisorChild{
 		parent:  options.Parent,
 		context: options.Context,
 		sticky:  options.Sticky,
-		emitter: NewEmitter(),
+		emitter: newEmitter(),
 	}
 }
 
@@ -118,8 +118,8 @@ func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options O
 
 	return EvaluateDependencies{
 		Context:               c.GetContext(context),
-		Logger:                c.parent.logger,
-		ModulesManager:        c.parent.modulesManager,
+		featurevisorLogger:    c.parent.logger,
+		modulesManager:        c.parent.modulesManager,
 		datafileReader:        c.parent.datafileReader,
 		sticky:                sticky,
 		DefaultVariationValue: options.DefaultVariationValue,
@@ -142,7 +142,7 @@ func (c *FeaturevisorChild) EvaluateFlag(featureKey string, context Context, opt
 func (c *FeaturevisorChild) IsEnabled(featureKey string, args ...interface{}) bool {
 	defer func() {
 		if r := recover(); r != nil {
-			c.parent.logger.Error("isEnabled", LogDetails{
+			c.parent.logger.Error("isEnabled", logDetails{
 				"featureKey": featureKey,
 				"error":      r,
 			})
@@ -187,7 +187,7 @@ func (c *FeaturevisorChild) EvaluateVariation(featureKey string, context Context
 func (c *FeaturevisorChild) GetVariation(featureKey string, args ...interface{}) *string {
 	defer func() {
 		if r := recover(); r != nil {
-			c.parent.logger.Error("getVariation", LogDetails{
+			c.parent.logger.Error("getVariation", logDetails{
 				"featureKey": featureKey,
 				"error":      r,
 			})
@@ -241,7 +241,7 @@ func (c *FeaturevisorChild) EvaluateVariable(featureKey string, variableKey Vari
 func (c *FeaturevisorChild) GetVariable(featureKey string, variableKey string, args ...interface{}) VariableValue {
 	defer func() {
 		if r := recover(); r != nil {
-			c.parent.logger.Error("getVariable", LogDetails{
+			c.parent.logger.Error("getVariable", logDetails{
 				"featureKey":  featureKey,
 				"variableKey": variableKey,
 				"error":       r,

@@ -3,10 +3,10 @@ package featurevisor
 import "testing"
 
 func TestGetParamsForDatafileSetEventShape(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
 	previousReader := newDatafileReader(datafileReaderOptions{
-		Logger: logger,
+		featurevisorLogger: logger,
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
 			Revision:      "1",
@@ -17,7 +17,7 @@ func TestGetParamsForDatafileSetEventShape(t *testing.T) {
 		},
 	})
 	newReader := newDatafileReader(datafileReaderOptions{
-		Logger: logger,
+		featurevisorLogger: logger,
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
 			Revision:      "2",

@@ -97,7 +97,7 @@ func TestGenericVariableMethods(t *testing.T) {
 		t.Fatalf("failed to parse datafile: %v", err)
 	}
 
-	sdk := NewFeaturevisor(Options{Datafile: datafile})
+	sdk := CreateFeaturevisor(FeaturevisorOptions{Datafile: datafile})
 	context := Context{"userId": "123"}
 
 	var arr []string

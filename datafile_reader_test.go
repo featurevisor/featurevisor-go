@@ -5,7 +5,7 @@ import (
 )
 
 func TestNewDatafileReader(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "test-revision",
@@ -19,8 +19,8 @@ func TestNewDatafileReader(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	if reader == nil {
@@ -37,7 +37,7 @@ func TestNewDatafileReader(t *testing.T) {
 }
 
 func TestDatafileReaderGetRegex(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "test-revision",
@@ -51,8 +51,8 @@ func TestDatafileReaderGetRegex(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	// Test regex caching
@@ -71,7 +71,7 @@ func TestDatafileReaderGetRegex(t *testing.T) {
 }
 
 func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "test-revision",
@@ -85,8 +85,8 @@ func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	context := Context{
@@ -179,7 +179,7 @@ func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
 
 // TestDatafileReaderComprehensive tests comprehensive datafile reader functionality
 func TestDatafileReaderComprehensive(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
 	// Create a comprehensive datafile with segments and features
 	jsonDatafile := `{
@@ -237,8 +237,8 @@ func TestDatafileReaderComprehensive(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("basic functionality", func(t *testing.T) {
@@ -359,7 +359,7 @@ func TestDatafileReaderComprehensive(t *testing.T) {
 }
 
 func TestDatafileReaderSegmentMatching(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
 	// Create segments for comprehensive testing
 	jsonDatafile := `{
@@ -392,8 +392,8 @@ func TestDatafileReaderSegmentMatching(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("dutch mobile users", func(t *testing.T) {
@@ -535,7 +535,7 @@ func TestDatafileReaderSegmentMatching(t *testing.T) {
 }
 
 func TestDatafileReaderForceMatching(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -584,8 +584,8 @@ func TestDatafileReaderForceMatching(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("force by conditions", func(t *testing.T) {
@@ -632,7 +632,7 @@ func TestDatafileReaderForceMatching(t *testing.T) {
 }
 
 func TestDatafileReaderStringifiedParsing(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -651,8 +651,8 @@ func TestDatafileReaderStringifiedParsing(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("parse stringified conditions", func(t *testing.T) {
@@ -718,7 +718,7 @@ func TestDatafileReaderStringifiedParsing(t *testing.T) {
 }
 
 func TestDatafileReaderErrorHandling(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -737,8 +737,8 @@ func TestDatafileReaderErrorHandling(t *testing.T) {
 	}
 
 	reader := newDatafileReader(datafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("handle invalid JSON in conditions", func(t *testing.T) {

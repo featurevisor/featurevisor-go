@@ -127,7 +127,7 @@ func runAssessDistribution(opts CLIOptions) {
 		json.Unmarshal(datafileBytes, &datafileContent)
 	}
 
-	instance := featurevisor.NewFeaturevisor(featurevisor.Options{
+	instance := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
 		Datafile: datafileContent,
 		LogLevel: &level,
 	})

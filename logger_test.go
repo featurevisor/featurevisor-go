@@ -35,27 +35,27 @@ func TestAllLevelsOrder(t *testing.T) {
 		LogLevelDebug,
 	}
 
-	if len(AllLevels) != len(expectedOrder) {
-		t.Errorf("AllLevels length = %d, expected %d", len(AllLevels), len(expectedOrder))
+	if len(allLevels) != len(expectedOrder) {
+		t.Errorf("allLevels length = %d, expected %d", len(allLevels), len(expectedOrder))
 	}
 
-	for i, level := range AllLevels {
+	for i, level := range allLevels {
 		if level != expectedOrder[i] {
-			t.Errorf("AllLevels[%d] = %s, expected %s", i, level, expectedOrder[i])
+			t.Errorf("allLevels[%d] = %s, expected %s", i, level, expectedOrder[i])
 		}
 	}
 }
 
 func TestNewLogger(t *testing.T) {
 	// Test default logger
-	logger := NewLogger(CreateLoggerOptions{})
-	if logger.GetLevel() != DefaultLevel {
-		t.Errorf("Default level = %s, expected %s", logger.GetLevel(), DefaultLevel)
+	logger := newLogger(loggerOptions{})
+	if logger.GetLevel() != defaultLevel {
+		t.Errorf("Default level = %s, expected %s", logger.GetLevel(), defaultLevel)
 	}
 
 	// Test logger with custom level
 	customLevel := LogLevelDebug
-	logger = NewLogger(CreateLoggerOptions{
+	logger = newLogger(loggerOptions{
 		Level: &customLevel,
 	})
 	if logger.GetLevel() != customLevel {
@@ -64,7 +64,7 @@ func TestNewLogger(t *testing.T) {
 }
 
 func TestLoggerSetLevel(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
 	// Test setting different levels
 	testLevels := []LogLevel{LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError, LogLevelFatal}
@@ -78,7 +78,7 @@ func TestLoggerSetLevel(t *testing.T) {
 }
 
 func TestLoggerShouldHandle(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
 	tests := []struct {
 		name         string
@@ -163,32 +163,32 @@ func TestDefaultLogHandler(t *testing.T) {
 	// Test different log levels
 	testCases := []struct {
 		level   LogLevel
-		message LogMessage
-		details LogDetails
+		message logMessage
+		details logDetails
 		expect  string
 	}{
 		{
 			level:   LogLevelInfo,
 			message: "Test info message",
-			details: LogDetails{"key": "value"},
+			details: logDetails{"key": "value"},
 			expect:  "[INFO]",
 		},
 		{
 			level:   LogLevelWarn,
 			message: "Test warning message",
-			details: LogDetails{"warning": true},
+			details: logDetails{"warning": true},
 			expect:  "[WARN]",
 		},
 		{
 			level:   LogLevelError,
 			message: "Test error message",
-			details: LogDetails{"error": "test"},
+			details: logDetails{"error": "test"},
 			expect:  "[ERROR]",
 		},
 		{
 			level:   LogLevelDebug,
 			message: "Test debug message",
-			details: LogDetails{"debug": "info"},
+			details: logDetails{"debug": "info"},
 			expect:  "[DEBUG]",
 		},
 	}
@@ -197,7 +197,7 @@ func TestDefaultLogHandler(t *testing.T) {
 		t.Run(string(tc.level), func(t *testing.T) {
 			buf.Reset()
 
-			DefaultLogHandler(tc.level, tc.message, tc.details)
+			defaultLogHandler(tc.level, tc.message, tc.details)
 
 			output := buf.String()
 			if !strings.Contains(output, tc.expect) {
@@ -217,7 +217,7 @@ func TestLoggerMethods(t *testing.T) {
 	defer log.SetOutput(os.Stderr)
 
 	level := LogLevelInfo
-	logger := NewLogger(CreateLoggerOptions{
+	logger := newLogger(loggerOptions{
 		Level: &level,
 	})
 
@@ -230,28 +230,28 @@ func TestLoggerMethods(t *testing.T) {
 		{
 			name: "Debug",
 			method: func() {
-				logger.Debug("debug message", LogDetails{"debug": true})
+				logger.Debug("debug message", logDetails{"debug": true})
 			},
 			expect: "", // Debug messages should be filtered out at info level
 		},
 		{
 			name: "Info",
 			method: func() {
-				logger.Info("info message", LogDetails{"info": true})
+				logger.Info("info message", logDetails{"info": true})
 			},
 			expect: "info",
 		},
 		{
 			name: "Warn",
 			method: func() {
-				logger.Warn("warn message", LogDetails{"warn": true})
+				logger.Warn("warn message", logDetails{"warn": true})
 			},
 			expect: "warn",
 		},
 		{
 			name: "Error",
 			method: func() {
-				logger.Error("error message", LogDetails{"error": true})
+				logger.Error("error message", logDetails{"error": true})
 			},
 			expect: "error",
 		},
@@ -280,21 +280,21 @@ func TestLoggerMethods(t *testing.T) {
 
 func TestCustomLogHandler(t *testing.T) {
 	var capturedLevel LogLevel
-	var capturedMessage LogMessage
-	var capturedDetails LogDetails
+	var capturedMessage logMessage
+	var capturedDetails logDetails
 
-	var customHandler LogHandler = func(level LogLevel, message LogMessage, details LogDetails) {
+	var customHandler logHandler = func(level LogLevel, message logMessage, details logDetails) {
 		capturedLevel = level
 		capturedMessage = message
 		capturedDetails = details
 	}
 
-	logger := NewLogger(CreateLoggerOptions{
+	logger := newLogger(loggerOptions{
 		Handler: &customHandler,
 	})
 
-	expectedMessage := LogMessage("test message")
-	expectedDetails := LogDetails{"key": "value"}
+	expectedMessage := logMessage("test message")
+	expectedDetails := logDetails{"key": "value"}
 
 	logger.Info(expectedMessage, expectedDetails)
 
@@ -309,16 +309,16 @@ func TestCustomLogHandler(t *testing.T) {
 	}
 }
 
-func TestCreateLogger(t *testing.T) {
+func TestInternalLoggerFactory(t *testing.T) {
 	// Test with no options
-	logger := CreateLogger(CreateLoggerOptions{})
-	if logger.GetLevel() != DefaultLevel {
-		t.Errorf("CreateLogger default level = %s, expected %s", logger.GetLevel(), DefaultLevel)
+	logger := newLogger(loggerOptions{})
+	if logger.GetLevel() != defaultLevel {
+		t.Errorf("CreateLogger default level = %s, expected %s", logger.GetLevel(), defaultLevel)
 	}
 
 	// Test with custom options
 	customLevel := LogLevelDebug
-	logger = CreateLogger(CreateLoggerOptions{
+	logger = newLogger(loggerOptions{
 		Level: &customLevel,
 	})
 	if logger.GetLevel() != customLevel {
@@ -327,10 +327,10 @@ func TestCreateLogger(t *testing.T) {
 }
 
 func BenchmarkLoggerInfo(b *testing.B) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		logger.Info("benchmark message", LogDetails{"benchmark": i})
+		logger.Info("benchmark message", logDetails{"benchmark": i})
 	}
 }

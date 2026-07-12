@@ -18,12 +18,11 @@ type SpawnOptions struct {
 	Sticky *StickyFeatures
 }
 
-// Options contains options for creating an instance
-type Options struct {
+// FeaturevisorOptions contains options for creating an instance.
+type FeaturevisorOptions struct {
 	Datafile     interface{} // DatafileContent | string
 	Context      Context
 	LogLevel     *LogLevel
-	Logger       *Logger
 	OnDiagnostic FeaturevisorDiagnosticHandler
 	Sticky       *StickyFeatures
 	Modules      []*FeaturevisorModule
@@ -40,7 +39,7 @@ type moduleDiagnosticSubscription struct {
 type Featurevisor struct {
 	// from options
 	context      Context
-	logger       *Logger
+	logger       *featurevisorLogger
 	logLevel     LogLevel
 	onDiagnostic FeaturevisorDiagnosticHandler
 	sticky       *StickyFeatures
@@ -48,35 +47,57 @@ type Featurevisor struct {
 	// internally created
 	datafile                      DatafileContent
 	datafileReader                *datafileReader
-	modulesManager                *ModulesManager
+	modulesManager                *modulesManager
 	moduleDiagnosticSubscriptions []moduleDiagnosticSubscription
 	nextModuleDiagnosticID        int
-	emitter                       *Emitter
+	emitter                       *emitter
 	closed                        bool
 }
 
-// NewFeaturevisor creates a new Featurevisor instance
-func NewFeaturevisor(options Options) *Featurevisor {
+// CreateFeaturevisor creates a new Featurevisor instance.
+func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 	// Set default context
 	context := Context{}
 	if options.Context != nil {
 		context = options.Context
 	}
 
-	// Set default logger
-	var logger *Logger
-	if options.Logger != nil {
-		logger = options.Logger
-	} else {
-		level := LogLevelInfo
-		if options.LogLevel != nil {
-			level = *options.LogLevel
-		}
-		logger = NewLogger(CreateLoggerOptions{Level: &level})
+	level := LogLevelInfo
+	if options.LogLevel != nil {
+		level = *options.LogLevel
 	}
+	var instance *Featurevisor
+	handler := logHandler(func(logLevel LogLevel, message logMessage, details logDetails) {
+		if instance == nil {
+			return
+		}
+		code := string(message)
+		if reason, ok := details["reason"].(EvaluationReason); ok {
+			code = string(reason)
+		} else if reason, ok := details["reason"].(string); ok {
+			code = reason
+		}
+		if message == "feature is deprecated" {
+			code = "deprecated_feature"
+		} else if message == "variable is deprecated" {
+			code = "deprecated_variable"
+		} else if message == "feature not found" {
+			code = "feature_not_found"
+		} else if message == "variable schema not found" {
+			code = "variable_not_found"
+		} else if message == "no variations" {
+			code = "no_variations"
+		} else if message == "invalid bucketBy" {
+			code = "invalid_bucket_by"
+		}
+		instance.reportDiagnostic(FeaturevisorDiagnostic{
+			Level: logLevel, Code: code, Message: string(message), Details: details,
+		}, nil)
+	})
+	logger := newLogger(loggerOptions{Level: &level, Handler: &handler})
 
 	// Create emitter
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	emptyDatafile := DatafileContent{
 		SchemaVersion: "2",
@@ -86,11 +107,11 @@ func NewFeaturevisor(options Options) *Featurevisor {
 	}
 
 	datafileReader := newDatafileReader(datafileReaderOptions{
-		Datafile: emptyDatafile,
-		Logger:   logger,
+		Datafile:           emptyDatafile,
+		featurevisorLogger: logger,
 	})
 
-	instance := &Featurevisor{
+	instance = &Featurevisor{
 		context:        context,
 		logger:         logger,
 		logLevel:       logger.GetLevel(),
@@ -101,7 +122,7 @@ func NewFeaturevisor(options Options) *Featurevisor {
 		sticky:         options.Sticky,
 	}
 
-	instance.modulesManager = NewModulesManager(ModulesManagerOptions{
+	instance.modulesManager = newModulesManager(modulesManagerOptions{
 		Modules:                            options.Modules,
 		ReportDiagnostic:                   instance.reportDiagnostic,
 		GetModuleApi:                       instance.getModuleApi,
@@ -155,8 +176,8 @@ func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
 	}
 
 	newDatafileReader := newDatafileReader(datafileReaderOptions{
-		Datafile: storedDatafile,
-		Logger:   i.logger,
+		Datafile:           storedDatafile,
+		featurevisorLogger: i.logger,
 	})
 
 	details := getParamsForDatafileSetEvent(i.datafileReader, newDatafileReader, replaceValue)
@@ -217,6 +238,26 @@ func (i *Featurevisor) SetSticky(sticky StickyFeatures, replace ...bool) {
 // GetRevision returns the revision
 func (i *Featurevisor) GetRevision() string {
 	return i.datafileReader.GetRevision()
+}
+
+func (i *Featurevisor) GetSchemaVersion() string {
+	return i.datafileReader.GetSchemaVersion()
+}
+
+func (i *Featurevisor) GetSegment(segmentKey string) *Segment {
+	return i.datafileReader.GetSegment(SegmentKey(segmentKey))
+}
+
+func (i *Featurevisor) GetFeatureKeys() []string {
+	return i.datafileReader.GetFeatureKeys()
+}
+
+func (i *Featurevisor) GetVariableKeys(featureKey string) []string {
+	return i.datafileReader.GetVariableKeys(FeatureKey(featureKey))
+}
+
+func (i *Featurevisor) HasVariations(featureKey string) bool {
+	return i.datafileReader.HasVariations(FeatureKey(featureKey))
 }
 
 // GetFeature returns a feature by key
@@ -299,7 +340,7 @@ func (i *Featurevisor) reportDiagnostic(
 				i.onDiagnostic(diagnostic)
 			}()
 		} else {
-			details := LogDetails{}
+			details := logDetails{}
 			if diagnostic.Details != nil {
 				for key, value := range diagnostic.Details {
 					details[key] = value
@@ -317,7 +358,7 @@ func (i *Featurevisor) reportDiagnostic(
 			if diagnostic.OriginalError != nil {
 				details["originalError"] = diagnostic.OriginalError
 			}
-			i.logger.Log(diagnostic.Level, LogMessage(diagnostic.Message), details)
+			defaultLogHandler(diagnostic.Level, logMessage(diagnostic.Message), details)
 		}
 	}
 
@@ -414,7 +455,7 @@ func (i *Featurevisor) SetContext(context Context, replace ...bool) {
 		Level:   LogLevelDebug,
 		Code:    "context_set",
 		Message: message,
-		Details: LogDetails{
+		Details: logDetails{
 			"context":  i.context,
 			"replaced": replaceValue,
 		},
@@ -455,7 +496,7 @@ func (i *Featurevisor) Spawn(args ...interface{}) *FeaturevisorChild {
 		}
 	}
 
-	return NewFeaturevisorChild(ChildOptions{
+	return newFeaturevisorChild(ChildOptions{
 		Parent:  i,
 		Context: i.GetContext(contextValue),
 		Sticky:  optionsValue.Sticky,
@@ -473,8 +514,8 @@ func (i *Featurevisor) getEvaluationDependencies(context Context, options Overri
 
 	return EvaluateDependencies{
 		Context:               i.GetContext(context),
-		Logger:                i.logger,
-		ModulesManager:        i.modulesManager,
+		featurevisorLogger:    i.logger,
+		modulesManager:        i.modulesManager,
 		datafileReader:        i.datafileReader,
 		sticky:                sticky,
 		DefaultVariationValue: options.DefaultVariationValue,
@@ -497,7 +538,7 @@ func (i *Featurevisor) EvaluateFlag(featureKey string, context Context, options 
 func (i *Featurevisor) IsEnabled(featureKey string, args ...interface{}) bool {
 	defer func() {
 		if r := recover(); r != nil {
-			i.logger.Error("isEnabled", LogDetails{
+			i.logger.Error("isEnabled", logDetails{
 				"featureKey": featureKey,
 				"error":      r,
 			})
@@ -542,7 +583,7 @@ func (i *Featurevisor) EvaluateVariation(featureKey string, context Context, opt
 func (i *Featurevisor) GetVariation(featureKey string, args ...interface{}) *string {
 	defer func() {
 		if r := recover(); r != nil {
-			i.logger.Error("getVariation", LogDetails{
+			i.logger.Error("getVariation", logDetails{
 				"featureKey": featureKey,
 				"error":      r,
 			})
@@ -596,7 +637,7 @@ func (i *Featurevisor) EvaluateVariable(featureKey string, variableKey VariableK
 func (i *Featurevisor) GetVariable(featureKey string, variableKey string, args ...interface{}) VariableValue {
 	defer func() {
 		if r := recover(); r != nil {
-			i.logger.Error("getVariable", LogDetails{
+			i.logger.Error("getVariable", logDetails{
 				"featureKey":  featureKey,
 				"variableKey": variableKey,
 				"error":       r,
@@ -629,7 +670,7 @@ func (i *Featurevisor) GetVariable(featureKey string, variableKey string, args .
 					return parsedJSON
 				} else {
 					// Log error if JSON parsing fails
-					i.logger.Error("could not parse JSON variable", LogDetails{
+					i.logger.Error("could not parse JSON variable", logDetails{
 						"featureKey":  featureKey,
 						"variableKey": variableKey,
 						"error":       err,

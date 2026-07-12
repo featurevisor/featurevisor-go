@@ -44,7 +44,7 @@ func TestRequiredFeaturesSimple(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk := NewFeaturevisor(Options{
+	sdk := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile1,
 	})
 
@@ -92,7 +92,7 @@ func TestRequiredFeaturesSimple(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk2 := NewFeaturevisor(Options{
+	sdk2 := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile2,
 	})
 
@@ -153,7 +153,7 @@ func TestRequiredFeaturesWithVariation(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk := NewFeaturevisor(Options{
+	sdk := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile1,
 	})
 
@@ -212,7 +212,7 @@ func TestRequiredFeaturesWithVariation(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk2 := NewFeaturevisor(Options{
+	sdk2 := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile2,
 	})
 

@@ -1,27 +1,12 @@
 package featurevisor
 
 import (
-	"strings"
 	"testing"
 )
 
 func TestDeprecatedFeatures(t *testing.T) {
 	var deprecatedCount int
-	var capturedLogs []string
-
-	// Create a custom logger to capture warnings
 	level := LogLevelWarn
-	handler := LogHandler(func(level LogLevel, message LogMessage, details LogDetails) {
-		if level == LogLevelWarn && strings.Contains(string(message), "is deprecated") {
-			deprecatedCount++
-		}
-		capturedLogs = append(capturedLogs, string(message))
-	})
-
-	customLogger := NewLogger(CreateLoggerOptions{
-		Level:   &level,
-		Handler: &handler,
-	})
 
 	jsonDatafile := `{
 		"schemaVersion": "2",
@@ -75,9 +60,14 @@ func TestDeprecatedFeatures(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk := NewFeaturevisor(Options{
+	sdk := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
-		Logger:   customLogger,
+		LogLevel: &level,
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			if diagnostic.Code == "deprecated_feature" {
+				deprecatedCount++
+			}
+		},
 	})
 
 	context := Context{"userId": "123"}
@@ -97,18 +87,6 @@ func TestDeprecatedFeatures(t *testing.T) {
 		t.Errorf("Expected 1 deprecated warning, got %d", deprecatedCount)
 	}
 
-	// Check that the warning message contains the expected content
-	foundDeprecatedWarning := false
-	for _, log := range capturedLogs {
-		if strings.Contains(log, "deprecated") {
-			foundDeprecatedWarning = true
-			break
-		}
-	}
-
-	if !foundDeprecatedWarning {
-		t.Error("Expected to find deprecated warning in logs")
-	}
 }
 
 // Helper function to create bool pointers

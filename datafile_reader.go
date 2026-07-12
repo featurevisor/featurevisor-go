@@ -9,8 +9,8 @@ import (
 
 // datafileReaderOptions contains options for creating a datafile reader
 type datafileReaderOptions struct {
-	Datafile DatafileContent
-	Logger   *Logger
+	Datafile           DatafileContent
+	featurevisorLogger *featurevisorLogger
 }
 
 // ForceResult represents the result of a force lookup
@@ -25,7 +25,7 @@ type datafileReader struct {
 	revision      string
 	segments      map[SegmentKey]Segment
 	features      map[FeatureKey]Feature
-	logger        *Logger
+	logger        *featurevisorLogger
 	regexCache    map[string]*regexp.Regexp
 }
 
@@ -36,7 +36,7 @@ func newDatafileReader(options datafileReaderOptions) *datafileReader {
 		revision:      options.Datafile.Revision,
 		segments:      options.Datafile.Segments,
 		features:      options.Datafile.Features,
-		logger:        options.Logger,
+		logger:        options.featurevisorLogger,
 		regexCache:    make(map[string]*regexp.Regexp),
 	}
 }
@@ -52,7 +52,7 @@ func AllConditionsAreMatched(conditions Condition, context Context) bool {
 			Segments:      make(map[SegmentKey]Segment),
 			Features:      make(map[FeatureKey]Feature),
 		},
-		Logger: NewLogger(CreateLoggerOptions{}),
+		featurevisorLogger: newLogger(loggerOptions{}),
 	})
 
 	return reader.AllConditionsAreMatched(conditions, context)
@@ -155,7 +155,7 @@ func (d *datafileReader) AllConditionsAreMatched(conditions Condition, context C
 	// Add error handling wrapper like in TypeScript version
 	defer func() {
 		if r := recover(); r != nil {
-			d.logger.Warn("Error in condition matching", LogDetails{
+			d.logger.Warn("Error in condition matching", logDetails{
 				"error":      r,
 				"conditions": conditions,
 				"context":    context,
@@ -302,7 +302,7 @@ func (d *datafileReader) AllSegmentsAreMatched(groupSegments interface{}, contex
 	// Add error handling wrapper like in TypeScript version
 	defer func() {
 		if r := recover(); r != nil {
-			d.logger.Warn("Error in segment matching", LogDetails{
+			d.logger.Warn("Error in segment matching", logDetails{
 				"error":         r,
 				"groupSegments": groupSegments,
 				"context":       context,
@@ -311,7 +311,7 @@ func (d *datafileReader) AllSegmentsAreMatched(groupSegments interface{}, contex
 	}()
 	// Handle wildcard
 	if groupSegments == "*" {
-		d.logger.Debug("matched wildcard segment", LogDetails{
+		d.logger.Debug("matched wildcard segment", logDetails{
 			"segments": groupSegments,
 		})
 		return true
@@ -322,7 +322,7 @@ func (d *datafileReader) AllSegmentsAreMatched(groupSegments interface{}, contex
 		segment := d.GetSegment(SegmentKey(segmentKey))
 		if segment != nil {
 			matched := d.SegmentIsMatched(segment, context)
-			d.logger.Debug("checked single segment", LogDetails{
+			d.logger.Debug("checked single segment", logDetails{
 				"segment": segmentKey,
 				"matched": matched,
 			})
@@ -407,7 +407,7 @@ func (d *datafileReader) AllSegmentsAreMatched(groupSegments interface{}, contex
 		}
 	}
 
-	d.logger.Debug("no segments matched", LogDetails{
+	d.logger.Debug("no segments matched", logDetails{
 		"segments": groupSegments,
 	})
 	return false
@@ -418,7 +418,7 @@ func (d *datafileReader) GetMatchedTraffic(traffic []Traffic, context Context) *
 	for _, t := range traffic {
 		segments := d.parseSegmentsIfStringified(t.Segments)
 		if d.AllSegmentsAreMatched(segments, context) {
-			d.logger.Debug("matched traffic rule", LogDetails{
+			d.logger.Debug("matched traffic rule", logDetails{
 				"ruleKey":  t.Key,
 				"segments": t.Segments,
 			})
@@ -503,7 +503,7 @@ func (d *datafileReader) parseConditionsIfStringified(conditions Condition) Cond
 		var parsedCondition Condition
 		err := json.Unmarshal([]byte(conditionStr), &parsedCondition)
 		if err != nil {
-			d.logger.Error("Error parsing conditions", LogDetails{
+			d.logger.Error("Error parsing conditions", logDetails{
 				"error":      err,
 				"conditions": conditionStr,
 			})
@@ -523,7 +523,7 @@ func (d *datafileReader) parseSegmentsIfStringified(segments interface{}) interf
 			var parsedSegments interface{}
 			err := json.Unmarshal([]byte(segmentStr), &parsedSegments)
 			if err != nil {
-				d.logger.Error("Error parsing segments", LogDetails{
+				d.logger.Error("Error parsing segments", logDetails{
 					"error":    err,
 					"segments": segmentStr,
 				})

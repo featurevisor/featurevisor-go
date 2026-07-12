@@ -41,7 +41,7 @@ func TestSDKV3ConformanceFixture(t *testing.T) {
 
 	reader := newDatafileReader(datafileReaderOptions{Datafile: DatafileContent{
 		SchemaVersion: "2", Revision: "conformance", Segments: map[SegmentKey]Segment{}, Features: map[FeatureKey]Feature{},
-	}, Logger: NewLogger(CreateLoggerOptions{})})
+	}, featurevisorLogger: newLogger(loggerOptions{})})
 	traffic := &Traffic{Allocation: fixture.Bucketing.Allocations}
 	for bucket, expected := range fixture.Bucketing.AllocationExpectations {
 		var bucketValue int

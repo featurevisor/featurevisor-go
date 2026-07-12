@@ -51,7 +51,7 @@ func TestVariablesWithoutVariations(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk := NewFeaturevisor(Options{
+	sdk := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 	})
 

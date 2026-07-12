@@ -34,6 +34,6 @@ type FeaturevisorModuleDiagnosticOptions struct {
 type FeaturevisorUnsubscribe func()
 
 func shouldLogDiagnostic(currentLevel LogLevel, targetLevel LogLevel) bool {
-	logger := NewLogger(CreateLoggerOptions{Level: &currentLevel})
+	logger := newLogger(loggerOptions{Level: &currentLevel})
 	return logger.shouldHandle(targetLevel)
 }
