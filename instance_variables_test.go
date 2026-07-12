@@ -112,7 +112,7 @@ func TestVariables(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	sdk := CreateInstance(Options{
+	sdk := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 	})
 

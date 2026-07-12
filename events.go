@@ -1,7 +1,11 @@
 package featurevisor
 
 // getParamsForDatafileSetEvent gets parameters for datafile set event
-func getParamsForDatafileSetEvent(previousDatafileReader *DatafileReader, newDatafileReader *DatafileReader) LogDetails {
+func getParamsForDatafileSetEvent(
+	previousDatafileReader *datafileReader,
+	newDatafileReader *datafileReader,
+	replace bool,
+) logDetails {
 	previousRevision := ""
 	if previousDatafileReader != nil {
 		previousRevision = previousDatafileReader.GetRevision()
@@ -75,16 +79,17 @@ func getParamsForDatafileSetEvent(previousDatafileReader *DatafileReader, newDat
 	// Combine all affected feature keys
 	allAffectedFeatures := append(append(removedFeatures, changedFeatures...), addedFeatures...)
 
-	return LogDetails{
+	return logDetails{
 		"revision":         newRevision,
 		"previousRevision": previousRevision,
 		"revisionChanged":  previousRevision != newRevision,
 		"features":         allAffectedFeatures,
+		"replaced":         replace,
 	}
 }
 
 // getParamsForStickySetEvent gets parameters for sticky set event
-func getParamsForStickySetEvent(previousStickyFeatures StickyFeatures, newStickyFeatures StickyFeatures, replace bool) LogDetails {
+func getParamsForStickySetEvent(previousStickyFeatures StickyFeatures, newStickyFeatures StickyFeatures, replace bool) logDetails {
 	keysBefore := make([]string, 0, len(previousStickyFeatures))
 	for key := range previousStickyFeatures {
 		keysBefore = append(keysBefore, string(key))
@@ -107,7 +112,7 @@ func getParamsForStickySetEvent(previousStickyFeatures StickyFeatures, newSticky
 		}
 	}
 
-	return LogDetails{
+	return logDetails{
 		"features": uniqueFeaturesAffected,
 		"replaced": replace,
 	}

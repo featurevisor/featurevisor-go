@@ -96,6 +96,15 @@ func runAssessDistribution(opts CLIOptions) {
 		return
 	}
 
+	if len(opts.Targets) > 1 {
+		for _, target := range opts.Targets {
+			selected := opts
+			selected.Targets = []string{target}
+			runAssessDistribution(selected)
+		}
+		return
+	}
+
 	var context featurevisor.Context
 	if opts.Context != "" {
 		json.Unmarshal([]byte(opts.Context), &context)
@@ -106,10 +115,11 @@ func runAssessDistribution(opts CLIOptions) {
 
 	levelStr := getLoggerLevel(opts)
 	level := featurevisor.LogLevel(levelStr)
-	datafilesByEnvironment := buildDatafiles(featurevisorProjectPath, []string{opts.Environment}, "", 0)
-
-	// Create SDK instance
-	datafile := datafilesByEnvironment[opts.Environment]
+	var target *string
+	if len(opts.Targets) == 1 {
+		target = &opts.Targets[0]
+	}
+	datafile := buildDatafileJSON(featurevisorProjectPath, &opts.Environment, opts.Inflate, target)
 
 	// Convert datafile to proper format
 	var datafileContent featurevisor.DatafileContent
@@ -117,7 +127,7 @@ func runAssessDistribution(opts CLIOptions) {
 		json.Unmarshal(datafileBytes, &datafileContent)
 	}
 
-	instance := featurevisor.CreateInstance(featurevisor.Options{
+	instance := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
 		Datafile: datafileContent,
 		LogLevel: &level,
 	})
@@ -135,6 +145,9 @@ func runAssessDistribution(opts CLIOptions) {
 
 	// Print header matching TypeScript format
 	fmt.Println("\nAssessing distribution for feature:", opts.Feature, "...")
+	if target != nil {
+		fmt.Printf("Target: %s\n", *target)
+	}
 
 	// Print context information
 	if opts.Context != "" {

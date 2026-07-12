@@ -3,10 +3,10 @@ package featurevisor
 import "testing"
 
 func TestGetParamsForDatafileSetEventShape(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
-	previousReader := NewDatafileReader(DatafileReaderOptions{
-		Logger: logger,
+	previousReader := newDatafileReader(datafileReaderOptions{
+		featurevisorLogger: logger,
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
 			Revision:      "1",
@@ -16,8 +16,8 @@ func TestGetParamsForDatafileSetEventShape(t *testing.T) {
 			},
 		},
 	})
-	newReader := NewDatafileReader(DatafileReaderOptions{
-		Logger: logger,
+	newReader := newDatafileReader(datafileReaderOptions{
+		featurevisorLogger: logger,
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
 			Revision:      "2",
@@ -28,7 +28,7 @@ func TestGetParamsForDatafileSetEventShape(t *testing.T) {
 		},
 	})
 
-	params := getParamsForDatafileSetEvent(previousReader, newReader)
+	params := getParamsForDatafileSetEvent(previousReader, newReader, true)
 
 	if _, exists := params["removedFeatures"]; exists {
 		t.Fatalf("did not expect removedFeatures field in event details")
@@ -38,6 +38,9 @@ func TestGetParamsForDatafileSetEventShape(t *testing.T) {
 	}
 	if _, exists := params["addedFeatures"]; exists {
 		t.Fatalf("did not expect addedFeatures field in event details")
+	}
+	if params["replaced"] != true {
+		t.Fatalf("expected replaced=true in event details")
 	}
 }
 

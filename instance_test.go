@@ -6,8 +6,8 @@ import (
 )
 
 func TestCreateInstance(t *testing.T) {
-	// Test that CreateInstance is a function
-	instance := CreateInstance(Options{})
+	// Test that CreateFeaturevisor is a function
+	instance := CreateFeaturevisor(FeaturevisorOptions{})
 	if instance == nil {
 		t.Fatal("Expected instance to be created")
 	}
@@ -25,7 +25,7 @@ func TestCreateInstance(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance = CreateInstance(Options{
+	instance = CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 	})
 
@@ -78,9 +78,9 @@ func TestPlainBucketBy(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				BucketKey: func(options ConfigureBucketKeyOptions) string {
@@ -142,9 +142,9 @@ func TestAndBucketBy(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				BucketKey: func(options ConfigureBucketKeyOptions) string {
@@ -207,9 +207,9 @@ func TestOrBucketBy(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				BucketKey: func(options ConfigureBucketKeyOptions) string {
@@ -251,7 +251,7 @@ func TestOrBucketBy(t *testing.T) {
 	}
 }
 
-func TestBeforeHook(t *testing.T) {
+func TestBeforeModule(t *testing.T) {
 	var intercepted bool
 	var interceptedFeatureKey string
 	var interceptedVariableKey string
@@ -288,9 +288,9 @@ func TestBeforeHook(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				Before: func(options EvaluateOptions) EvaluateOptions {
@@ -313,7 +313,7 @@ func TestBeforeHook(t *testing.T) {
 	}
 
 	if !intercepted {
-		t.Error("Expected before hook to be called")
+		t.Error("Expected before module to be called")
 	}
 
 	if interceptedFeatureKey != "test" {
@@ -325,7 +325,7 @@ func TestBeforeHook(t *testing.T) {
 	}
 }
 
-func TestAfterHook(t *testing.T) {
+func TestAfterModule(t *testing.T) {
 	var intercepted bool
 	var interceptedFeatureKey string
 	var interceptedVariableKey string
@@ -362,9 +362,9 @@ func TestAfterHook(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
-		Hooks: []*Hook{
+		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
 				After: func(evaluation Evaluation, options EvaluateOptions) Evaluation {
@@ -390,7 +390,7 @@ func TestAfterHook(t *testing.T) {
 	}
 
 	if !intercepted {
-		t.Error("Expected after hook to be called")
+		t.Error("Expected after module to be called")
 	}
 
 	if interceptedFeatureKey != "test" {
@@ -405,6 +405,323 @@ func TestAfterHook(t *testing.T) {
 // Helper function to create string pointers
 func stringPtr(s string) *string {
 	return &s
+}
+
+func TestModulesSetupDiagnosticsAndClose(t *testing.T) {
+	var setupCalled bool
+	var closeCalled bool
+	var setupRevision string
+	var moduleSawDatafileSet bool
+	var diagnostics []FeaturevisorDiagnostic
+
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "module-test",
+			Segments:      map[SegmentKey]Segment{},
+			Features:      map[FeatureKey]Feature{},
+		},
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+		Modules: []*FeaturevisorModule{
+			{
+				Name: "observer",
+				Setup: func(api FeaturevisorModuleApi) {
+					setupCalled = true
+					setupRevision = api.GetRevision()
+					api.OnDiagnostic(func(diagnostic FeaturevisorDiagnostic) {
+						if diagnostic.Code == "datafile_set" {
+							moduleSawDatafileSet = true
+						}
+					})
+					api.ReportDiagnostic(FeaturevisorModuleReportedDiagnostic{
+						Level:   LogLevelInfo,
+						Code:    "module_ready",
+						Message: "Module ready",
+					})
+				},
+				Close: func() {
+					closeCalled = true
+				},
+			},
+		},
+	})
+
+	if !setupCalled {
+		t.Fatal("expected module setup to be called")
+	}
+	if setupRevision != "unknown" {
+		t.Fatalf("expected setup API revision to be unknown before initial datafile is set, got %s", setupRevision)
+	}
+	if !moduleSawDatafileSet {
+		t.Fatal("expected module diagnostic subscription to observe initial datafile_set")
+	}
+
+	foundModuleDiagnostic := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "module_ready" && diagnostic.Module == "observer" {
+			foundModuleDiagnostic = true
+			break
+		}
+	}
+	if !foundModuleDiagnostic {
+		t.Fatal("expected module reported diagnostic")
+	}
+
+	instance.AddModule(&FeaturevisorModule{Name: "observer"})
+
+	foundDuplicateDiagnostic := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "duplicate_module" && diagnostic.Level == LogLevelError {
+			foundDuplicateDiagnostic = true
+			break
+		}
+	}
+
+	if !foundDuplicateDiagnostic {
+		t.Fatal("expected duplicate module diagnostic")
+	}
+
+	instance.Close()
+
+	if !closeCalled {
+		t.Fatal("expected module close to be called")
+	}
+}
+
+func TestModuleSetupFailureIsIsolated(t *testing.T) {
+	var diagnostics []FeaturevisorDiagnostic
+	closed := 0
+	logLevel := LogLevelError
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		LogLevel: &logLevel,
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+	})
+
+	remove := instance.AddModule(&FeaturevisorModule{
+		Name: "broken-setup",
+		Setup: func(api FeaturevisorModuleApi) {
+			api.OnDiagnostic(func(FeaturevisorDiagnostic) {})
+			panic("broken setup")
+		},
+		Close: func() { closed++ },
+	})
+
+	if remove != nil {
+		t.Fatal("failed setup module must not be registered")
+	}
+	if closed != 1 {
+		t.Fatalf("expected close once, got %d", closed)
+	}
+	found := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "module_setup_error" && diagnostic.ModuleName == "broken-setup" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected module_setup_error diagnostic")
+	}
+}
+
+func TestDiagnosticHandlerPanicsAreIsolated(t *testing.T) {
+	seen := 0
+	logLevel := LogLevelDebug
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		LogLevel: &logLevel,
+		OnDiagnostic: func(FeaturevisorDiagnostic) {
+			panic("broken root handler")
+		},
+		Modules: []*FeaturevisorModule{
+			{Setup: func(api FeaturevisorModuleApi) {
+				api.OnDiagnostic(func(FeaturevisorDiagnostic) { panic("broken module handler") }, FeaturevisorModuleDiagnosticOptions{LogLevel: LogLevelDebug})
+			}},
+			{Setup: func(api FeaturevisorModuleApi) {
+				api.OnDiagnostic(func(FeaturevisorDiagnostic) { seen++ }, FeaturevisorModuleDiagnosticOptions{LogLevel: LogLevelDebug})
+			}},
+		},
+	})
+
+	instance.SetContext(Context{"country": "nl"}, false)
+	if seen == 0 {
+		t.Fatal("expected working diagnostic handler to keep running")
+	}
+}
+
+func TestRemovedModulesAreClosed(t *testing.T) {
+	closed := []string{}
+	instance := CreateFeaturevisor(FeaturevisorOptions{})
+
+	unsubscribe := instance.AddModule(&FeaturevisorModule{
+		Name: "dynamic",
+		Close: func() {
+			closed = append(closed, "dynamic")
+		},
+	})
+
+	if unsubscribe == nil {
+		t.Fatal("expected add module to return unsubscribe")
+	}
+
+	unsubscribe()
+	unsubscribe()
+
+	instance.AddModule(&FeaturevisorModule{
+		Name: "dynamic",
+		Close: func() {
+			closed = append(closed, "dynamic-again")
+		},
+	})
+	instance.RemoveModule("dynamic")
+
+	if len(closed) != 2 || closed[0] != "dynamic" || closed[1] != "dynamic-again" {
+		t.Fatalf("expected removed modules to be closed once each, got %#v", closed)
+	}
+}
+
+func TestModuleCloseErrorsAreReportedAndDoNotStopCleanup(t *testing.T) {
+	var diagnostics []FeaturevisorDiagnostic
+	var errorEvents []FeaturevisorDiagnostic
+	closed := []string{}
+
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+	})
+
+	instance.On(EventNameError, func(details EventDetails) {
+		if diagnostic, ok := details["diagnostic"].(FeaturevisorDiagnostic); ok {
+			errorEvents = append(errorEvents, diagnostic)
+		}
+	})
+
+	instance.AddModule(&FeaturevisorModule{
+		Name: "first",
+		Close: func() {
+			closed = append(closed, "first")
+			panic("first close failed")
+		},
+	})
+	instance.AddModule(&FeaturevisorModule{
+		Name: "second",
+		Close: func() {
+			closed = append(closed, "second")
+		},
+	})
+
+	instance.Close()
+
+	if len(closed) != 2 || closed[0] != "first" || closed[1] != "second" {
+		t.Fatalf("expected close cleanup to continue after a module panics, got %#v", closed)
+	}
+
+	foundDiagnostic := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "module_close_error" &&
+			diagnostic.Level == LogLevelError &&
+			diagnostic.ModuleName == "first" &&
+			diagnostic.OriginalError != nil {
+			foundDiagnostic = true
+			break
+		}
+	}
+	if !foundDiagnostic {
+		t.Fatalf("expected module_close_error diagnostic, got %#v", diagnostics)
+	}
+
+	foundErrorEvent := false
+	for _, diagnostic := range errorEvents {
+		if diagnostic.Code == "module_close_error" && diagnostic.ModuleName == "first" {
+			foundErrorEvent = true
+			break
+		}
+	}
+	if !foundErrorEvent {
+		t.Fatalf("expected module_close_error to trigger error event, got %#v", errorEvents)
+	}
+}
+
+func TestModuleUnsubscribeReportsCloseErrors(t *testing.T) {
+	var diagnostics []FeaturevisorDiagnostic
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+	})
+
+	unsubscribe := instance.AddModule(&FeaturevisorModule{
+		Name: "dynamic",
+		Close: func() {
+			panic("dynamic close failed")
+		},
+	})
+	if unsubscribe == nil {
+		t.Fatal("expected add module to return unsubscribe")
+	}
+
+	unsubscribe()
+	unsubscribe()
+
+	foundDiagnostic := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "module_close_error" && diagnostic.ModuleName == "dynamic" {
+			foundDiagnostic = true
+			break
+		}
+	}
+	if !foundDiagnostic {
+		t.Fatalf("expected module_close_error diagnostic from unsubscribe, got %#v", diagnostics)
+	}
+}
+
+func TestSetDatafileMergesByDefaultAndReplacesWhenRequested(t *testing.T) {
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "1",
+			Segments:      map[SegmentKey]Segment{},
+			Features: map[FeatureKey]Feature{
+				"first": {
+					BucketBy: "userId",
+					Traffic:  []Traffic{},
+				},
+			},
+		},
+	})
+
+	secondDatafile := DatafileContent{
+		SchemaVersion: "2",
+		Revision:      "2",
+		Segments:      map[SegmentKey]Segment{},
+		Features: map[FeatureKey]Feature{
+			"second": {
+				BucketBy: "userId",
+				Traffic:  []Traffic{},
+			},
+		},
+	}
+
+	instance.SetDatafile(secondDatafile)
+
+	if instance.GetFeature("first") == nil {
+		t.Fatal("expected default SetDatafile to preserve existing features")
+	}
+	if instance.GetFeature("second") == nil {
+		t.Fatal("expected default SetDatafile to add incoming features")
+	}
+
+	instance.SetDatafile(secondDatafile, true)
+
+	if instance.GetFeature("first") != nil {
+		t.Fatal("expected replace SetDatafile to remove existing features")
+	}
+	if instance.GetFeature("second") == nil {
+		t.Fatal("expected replace SetDatafile to keep incoming features")
+	}
 }
 
 func TestGetAllEvaluations(t *testing.T) {
@@ -500,7 +817,7 @@ func TestGetAllEvaluations(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	instance := CreateInstance(Options{
+	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafile,
 	})
 
@@ -638,5 +955,36 @@ func TestGetAllEvaluations(t *testing.T) {
 		t.Error("Expected 'nonExistent' feature to be in evaluated features")
 	} else if nonExistentFeature.Enabled {
 		t.Error("Expected 'nonExistent' feature to be disabled")
+	}
+}
+
+func TestLifecycleMutationsReportDiagnostics(t *testing.T) {
+	logLevel := LogLevelDebug
+	diagnostics := []FeaturevisorDiagnostic{}
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		LogLevel: &logLevel,
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+	})
+
+	instance.SetDatafile(DatafileContent{
+		SchemaVersion: "2",
+		Revision:      "1",
+		Segments:      map[SegmentKey]Segment{},
+		Features:      map[FeatureKey]Feature{},
+	})
+	instance.SetSticky(StickyFeatures{"test": EvaluatedFeature{Enabled: true}})
+	instance.SetContext(Context{"country": "nl"})
+
+	codes := map[string]bool{}
+	for _, diagnostic := range diagnostics {
+		codes[diagnostic.Code] = true
+	}
+
+	for _, code := range []string{"datafile_set", "sticky_set", "context_set"} {
+		if !codes[code] {
+			t.Fatalf("expected %s diagnostic, got %#v", code, diagnostics)
+		}
 	}
 }

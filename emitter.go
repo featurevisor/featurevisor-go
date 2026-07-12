@@ -12,6 +12,7 @@ const (
 	EventNameDatafileSet EventName = "datafile_set"
 	EventNameContextSet  EventName = "context_set"
 	EventNameStickySet   EventName = "sticky_set"
+	EventNameError       EventName = "error"
 )
 
 // EventDetails represents additional details for events
@@ -32,16 +33,16 @@ type Listeners map[EventName][]ListenerEntry
 // Unsubscribe is a function type for unsubscribing from events
 type Unsubscribe func()
 
-// Emitter provides event handling functionality
-type Emitter struct {
+// emitter provides event handling functionality
+type emitter struct {
 	listeners Listeners
 	nextID    int
 	mu        sync.RWMutex
 }
 
-// NewEmitter creates a new emitter instance
-func NewEmitter() *Emitter {
-	return &Emitter{
+// newEmitter creates a new emitter instance
+func newEmitter() *emitter {
+	return &emitter{
 		listeners: make(Listeners),
 		nextID:    1,
 	}
@@ -49,7 +50,7 @@ func NewEmitter() *Emitter {
 
 // On subscribes to an event with a callback function
 // Returns an unsubscribe function that can be called to remove the listener
-func (e *Emitter) On(eventName EventName, callback EventCallback) Unsubscribe {
+func (e *emitter) On(eventName EventName, callback EventCallback) Unsubscribe {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -97,7 +98,7 @@ func (e *Emitter) On(eventName EventName, callback EventCallback) Unsubscribe {
 }
 
 // Trigger fires an event with the given details
-func (e *Emitter) Trigger(eventName EventName, details EventDetails) {
+func (e *emitter) Trigger(eventName EventName, details EventDetails) {
 	if details == nil {
 		details = make(EventDetails)
 	}
@@ -127,19 +128,19 @@ func (e *Emitter) Trigger(eventName EventName, details EventDetails) {
 }
 
 // TriggerDefault fires an event with empty details
-func (e *Emitter) TriggerDefault(eventName EventName) {
+func (e *emitter) TriggerDefault(eventName EventName) {
 	e.Trigger(eventName, make(EventDetails))
 }
 
 // ClearAll removes all event listeners
-func (e *Emitter) ClearAll() {
+func (e *emitter) ClearAll() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.listeners = make(Listeners)
 }
 
 // GetListenerCount returns the number of listeners for a specific event
-func (e *Emitter) GetListenerCount(eventName EventName) int {
+func (e *emitter) GetListenerCount(eventName EventName) int {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	listeners := e.listeners[eventName]
@@ -150,12 +151,12 @@ func (e *Emitter) GetListenerCount(eventName EventName) int {
 }
 
 // HasListeners returns true if there are any listeners for the given event
-func (e *Emitter) HasListeners(eventName EventName) bool {
+func (e *emitter) HasListeners(eventName EventName) bool {
 	return e.GetListenerCount(eventName) > 0
 }
 
 // GetEventNames returns all event names that have listeners
-func (e *Emitter) GetEventNames() []EventName {
+func (e *emitter) GetEventNames() []EventName {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	var eventNames []EventName

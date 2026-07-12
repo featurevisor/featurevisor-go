@@ -315,9 +315,9 @@ func TestConditionIsMatchedDate(t *testing.T) {
 
 // TestConditionIsMatchedComprehensive tests all operators comprehensively
 func TestConditionIsMatchedComprehensive(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "2.0",
+		"schemaVersion": "2",
 		"revision": "1",
 		"segments": {},
 		"features": {}
@@ -328,9 +328,9 @@ func TestConditionIsMatchedComprehensive(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	// Test wildcard conditions
@@ -855,9 +855,9 @@ func TestConditionIsMatchedEdgeCases(t *testing.T) {
 }
 
 func TestConditionIsMatchedComplexNested(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "2.0",
+		"schemaVersion": "2",
 		"revision": "1",
 		"segments": {},
 		"features": {}
@@ -868,9 +868,9 @@ func TestConditionIsMatchedComplexNested(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	// Test complex nested conditions similar to TypeScript tests

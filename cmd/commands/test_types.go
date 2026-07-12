@@ -29,8 +29,7 @@ type FeatureAssertion struct {
 	Matrix                *AssertionMatrix                                        `json:"matrix,omitempty"`
 	Description           *string                                                 `json:"description,omitempty"`
 	Environment           featurevisor.EnvironmentKey                             `json:"environment"`
-	Scope                 *string                                                 `json:"scope,omitempty"`
-	Tag                   *string                                                 `json:"tag,omitempty"`
+	Target                *string                                                 `json:"target,omitempty"`
 	At                    *featurevisor.Weight                                    `json:"at,omitempty"`
 	Sticky                *featurevisor.StickyFeatures                            `json:"sticky,omitempty"`
 	Context               *featurevisor.Context                                   `json:"context,omitempty"`

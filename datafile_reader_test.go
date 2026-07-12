@@ -5,9 +5,9 @@ import (
 )
 
 func TestNewDatafileReader(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "1.0.0",
+		"schemaVersion": "2",
 		"revision": "test-revision",
 		"segments": {},
 		"features": {}
@@ -18,28 +18,28 @@ func TestNewDatafileReader(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	if reader == nil {
-		t.Error("NewDatafileReader should return a non-nil reader")
+		t.Error("newDatafileReader should return a non-nil reader")
 	}
 
 	if reader.GetRevision() != "test-revision" {
 		t.Errorf("Expected revision 'test-revision', got '%s'", reader.GetRevision())
 	}
 
-	if reader.GetSchemaVersion() != "1.0.0" {
-		t.Errorf("Expected schema version '1.0.0', got '%s'", reader.GetSchemaVersion())
+	if reader.GetSchemaVersion() != "2" {
+		t.Errorf("Expected schema version '2', got '%s'", reader.GetSchemaVersion())
 	}
 }
 
 func TestDatafileReaderGetRegex(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "1.0.0",
+		"schemaVersion": "2",
 		"revision": "test-revision",
 		"segments": {},
 		"features": {}
@@ -50,9 +50,9 @@ func TestDatafileReaderGetRegex(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	// Test regex caching
@@ -71,9 +71,9 @@ func TestDatafileReaderGetRegex(t *testing.T) {
 }
 
 func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
-		"schemaVersion": "1.0.0",
+		"schemaVersion": "2",
 		"revision": "test-revision",
 		"segments": {},
 		"features": {}
@@ -84,9 +84,9 @@ func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	context := Context{
@@ -151,11 +151,35 @@ func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
 	if !result {
 		t.Error("Or condition should match when at least one sub-condition matches")
 	}
+
+	notCondition := NotCondition{
+		Not: []Condition{
+			PlainCondition{
+				Attribute: "country",
+				Operator:  OperatorEquals,
+				Value:     func() *ConditionValue { v := ConditionValue("US"); return &v }(),
+			},
+			PlainCondition{
+				Attribute: "age",
+				Operator:  OperatorGreaterThan,
+				Value:     func() *ConditionValue { v := ConditionValue(30); return &v }(),
+			},
+		},
+	}
+	result = reader.AllConditionsAreMatched(notCondition, context)
+	if !result {
+		t.Error("NOT condition should match when not all direct children match")
+	}
+
+	result = reader.AllConditionsAreMatched(NotCondition{Not: []Condition{}}, context)
+	if result {
+		t.Error("Empty NOT condition should defensively return false")
+	}
 }
 
 // TestDatafileReaderComprehensive tests comprehensive datafile reader functionality
 func TestDatafileReaderComprehensive(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
 	// Create a comprehensive datafile with segments and features
 	jsonDatafile := `{
@@ -212,9 +236,9 @@ func TestDatafileReaderComprehensive(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("basic functionality", func(t *testing.T) {
@@ -335,7 +359,7 @@ func TestDatafileReaderComprehensive(t *testing.T) {
 }
 
 func TestDatafileReaderSegmentMatching(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 
 	// Create segments for comprehensive testing
 	jsonDatafile := `{
@@ -367,9 +391,9 @@ func TestDatafileReaderSegmentMatching(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("dutch mobile users", func(t *testing.T) {
@@ -460,10 +484,58 @@ func TestDatafileReaderSegmentMatching(t *testing.T) {
 			t.Error("German mobile users should not match")
 		}
 	})
+
+	t.Run("not segments negate implicit and", func(t *testing.T) {
+		segments := NotGroupSegment{
+			Not: []GroupSegment{"mobileUsers", "netherlands"},
+		}
+
+		result := reader.AllSegmentsAreMatched(segments, Context{
+			"country":    "nl",
+			"deviceType": "mobile",
+		})
+		if result {
+			t.Error("NOT segments should not match when all direct children match")
+		}
+
+		result = reader.AllSegmentsAreMatched(segments, Context{
+			"country":    "nl",
+			"deviceType": "desktop",
+		})
+		if !result {
+			t.Error("NOT segments should match when only some direct children match")
+		}
+	})
+
+	t.Run("not with nested or means none match", func(t *testing.T) {
+		segments := NotGroupSegment{
+			Not: []GroupSegment{
+				OrGroupSegment{
+					Or: []GroupSegment{"mobileUsers", "desktopUsers"},
+				},
+			},
+		}
+
+		if reader.AllSegmentsAreMatched(segments, Context{"deviceType": "mobile"}) {
+			t.Error("Nested OR under NOT should not match mobile users")
+		}
+
+		if !reader.AllSegmentsAreMatched(segments, Context{"deviceType": "tv"}) {
+			t.Error("Nested OR under NOT should match when none of the OR children match")
+		}
+	})
+
+	t.Run("empty not segments return false", func(t *testing.T) {
+		segments := NotGroupSegment{Not: []GroupSegment{}}
+
+		if reader.AllSegmentsAreMatched(segments, Context{}) {
+			t.Error("Empty NOT segments should defensively return false")
+		}
+	})
 }
 
 func TestDatafileReaderForceMatching(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -511,9 +583,9 @@ func TestDatafileReaderForceMatching(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("force by conditions", func(t *testing.T) {
@@ -560,7 +632,7 @@ func TestDatafileReaderForceMatching(t *testing.T) {
 }
 
 func TestDatafileReaderStringifiedParsing(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -578,9 +650,9 @@ func TestDatafileReaderStringifiedParsing(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("parse stringified conditions", func(t *testing.T) {
@@ -646,7 +718,7 @@ func TestDatafileReaderStringifiedParsing(t *testing.T) {
 }
 
 func TestDatafileReaderErrorHandling(t *testing.T) {
-	logger := NewLogger(CreateLoggerOptions{})
+	logger := newLogger(loggerOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -664,9 +736,9 @@ func TestDatafileReaderErrorHandling(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := NewDatafileReader(DatafileReaderOptions{
-		Datafile: datafile,
-		Logger:   logger,
+	reader := newDatafileReader(datafileReaderOptions{
+		Datafile:           datafile,
+		featurevisorLogger: logger,
 	})
 
 	t.Run("handle invalid JSON in conditions", func(t *testing.T) {

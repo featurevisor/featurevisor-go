@@ -10,6 +10,7 @@ func TestEventNames(t *testing.T) {
 		EventNameDatafileSet,
 		EventNameContextSet,
 		EventNameStickySet,
+		EventNameError,
 	}
 
 	for _, eventName := range eventNames {
@@ -22,17 +23,17 @@ func TestEventNames(t *testing.T) {
 }
 
 func TestNewEmitter(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 	if emitter == nil {
-		t.Error("NewEmitter should return a non-nil emitter")
+		t.Error("newEmitter should return a non-nil emitter")
 	}
 	if emitter.listeners == nil {
-		t.Error("Emitter listeners should be initialized")
+		t.Error("emitter listeners should be initialized")
 	}
 }
 
 func TestEmitterOn(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	// Test subscribing to an event
 	callback := func(details EventDetails) {
@@ -56,7 +57,7 @@ func TestEmitterOn(t *testing.T) {
 }
 
 func TestEmitterTrigger(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	// Test triggering an event with no listeners
 	emitter.Trigger(EventNameDatafileSet, EventDetails{"test": "value"})
@@ -86,7 +87,7 @@ func TestEmitterTrigger(t *testing.T) {
 }
 
 func TestEmitterTriggerDefault(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	callbackCalled := false
 	receivedDetails := EventDetails{}
@@ -113,7 +114,7 @@ func TestEmitterTriggerDefault(t *testing.T) {
 }
 
 func TestEmitterMultipleListeners(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	callback1Called := false
 	callback2Called := false
@@ -144,8 +145,35 @@ func TestEmitterMultipleListeners(t *testing.T) {
 	}
 }
 
+func TestEmitterTriggerUsesListenerSnapshot(t *testing.T) {
+	emitter := newEmitter()
+	calls := []string{}
+	var unsubscribeSecond Unsubscribe
+
+	emitter.On(EventNameStickySet, func(details EventDetails) {
+		calls = append(calls, "first")
+		unsubscribeSecond()
+	})
+	unsubscribeSecond = emitter.On(EventNameStickySet, func(details EventDetails) {
+		calls = append(calls, "second")
+	})
+
+	emitter.Trigger(EventNameStickySet, nil)
+	emitter.Trigger(EventNameStickySet, nil)
+
+	expected := []string{"first", "second", "first"}
+	if len(calls) != len(expected) {
+		t.Fatalf("expected calls %#v, got %#v", expected, calls)
+	}
+	for i, call := range calls {
+		if call != expected[i] {
+			t.Fatalf("expected calls %#v, got %#v", expected, calls)
+		}
+	}
+}
+
 func TestEmitterUnsubscribe(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	callback1Called := false
 	callback2Called := false
@@ -180,7 +208,7 @@ func TestEmitterUnsubscribe(t *testing.T) {
 }
 
 func TestEmitterMultipleUnsubscribe(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	callbackCalled := false
 	callback := func(details EventDetails) {
@@ -202,7 +230,7 @@ func TestEmitterMultipleUnsubscribe(t *testing.T) {
 }
 
 func TestEmitterClearAll(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	callback1Called := false
 	callback2Called := false
@@ -241,7 +269,7 @@ func TestEmitterClearAll(t *testing.T) {
 }
 
 func TestEmitterHasListeners(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	if emitter.HasListeners(EventNameDatafileSet) {
 		t.Error("Should not have listeners initially")
@@ -262,7 +290,7 @@ func TestEmitterHasListeners(t *testing.T) {
 }
 
 func TestEmitterGetEventNames(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	// Initially no events
 	eventNames := emitter.GetEventNames()
@@ -302,7 +330,7 @@ func TestEmitterGetEventNames(t *testing.T) {
 }
 
 func TestEmitterConcurrentAccess(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	var wg sync.WaitGroup
 	numGoroutines := 10
@@ -334,7 +362,7 @@ func TestEmitterConcurrentAccess(t *testing.T) {
 }
 
 func TestEmitterPanicRecovery(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	// Create a callback that panics
 	panicCallback := func(details EventDetails) {
@@ -360,7 +388,7 @@ func TestEmitterPanicRecovery(t *testing.T) {
 
 // TestEmitterOriginalSpec matches the original TypeScript test specification
 func TestEmitterOriginalSpec(t *testing.T) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 	var handledDetails []EventDetails
 
 	handleDetails := func(details EventDetails) {
@@ -415,7 +443,7 @@ func TestEmitterOriginalSpec(t *testing.T) {
 }
 
 func BenchmarkEmitterTrigger(b *testing.B) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	callback := func(details EventDetails) {
 		// Simulate some work
@@ -431,7 +459,7 @@ func BenchmarkEmitterTrigger(b *testing.B) {
 }
 
 func BenchmarkEmitterMultipleListeners(b *testing.B) {
-	emitter := NewEmitter()
+	emitter := newEmitter()
 
 	// Add multiple listeners
 	for i := 0; i < 10; i++ {
