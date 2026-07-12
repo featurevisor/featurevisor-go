@@ -27,6 +27,7 @@ type CLIOptions struct {
 	SchemaVersion        string
 	ProjectDirectoryPath string
 	PopulateUuid         []string
+	Targets              []string
 }
 
 // ParseCLIOptions parses command line arguments into CLIOptions
@@ -36,12 +37,17 @@ func ParseCLIOptions(args []string) CLIOptions {
 		N:                    1000, // default value
 	}
 
-	// Handle populateUuid flags (can be multiple) before main flag parsing
+	// Handle repeatable flags before main flag parsing.
 	var filteredArgs []string
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "--populateUuid=") {
 			value := strings.TrimPrefix(arg, "--populateUuid=")
 			opts.PopulateUuid = append(opts.PopulateUuid, value)
+		} else if strings.HasPrefix(arg, "--target=") {
+			value := strings.TrimPrefix(arg, "--target=")
+			if value != "" && !containsString(opts.Targets, value) {
+				opts.Targets = append(opts.Targets, value)
+			}
 		} else {
 			filteredArgs = append(filteredArgs, arg)
 		}
@@ -72,6 +78,15 @@ func ParseCLIOptions(args []string) CLIOptions {
 	fs.Parse(filteredArgs)
 
 	return opts
+}
+
+func containsString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 // getCurrentDir returns the current working directory

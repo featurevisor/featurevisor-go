@@ -721,9 +721,13 @@ func buildDatafileCache(
 	featurevisorProjectPath string,
 	config map[string]interface{},
 	inflate int,
+	selectedTargets []string,
 ) map[string]interface{} {
 	cache := make(map[string]interface{})
-	targetKeys := getTargets(featurevisorProjectPath)
+	targetKeys := selectedTargets
+	if len(targetKeys) == 0 {
+		targetKeys = getTargets(featurevisorProjectPath)
+	}
 
 	environments := []*string{nil}
 	if envList, ok := config["environments"].([]interface{}); ok {
@@ -840,6 +844,7 @@ func runTest(opts CLIOptions) {
 		featurevisorProjectPath,
 		config,
 		opts.Inflate,
+		opts.Targets,
 	)
 
 	fmt.Println()
@@ -860,6 +865,23 @@ func runTest(opts CLIOptions) {
 	for _, test := range tests {
 		testKey := test["key"].(string)
 		assertions := test["assertions"].([]interface{})
+		if _, hasFeature := test["feature"]; hasFeature && len(opts.Targets) > 0 {
+			filtered := make([]interface{}, 0, len(assertions))
+			for _, raw := range assertions {
+				assertion, ok := raw.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				target, _ := assertion["target"].(string)
+				if target == "" || containsString(opts.Targets, target) {
+					filtered = append(filtered, raw)
+				}
+			}
+			assertions = filtered
+			if len(assertions) == 0 {
+				continue
+			}
+		}
 		results := ""
 		testHasError := false
 		testDuration := 0.0

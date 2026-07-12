@@ -145,6 +145,15 @@ func runBenchmark(opts CLIOptions) {
 		return
 	}
 
+	if len(opts.Targets) > 1 {
+		for _, target := range opts.Targets {
+			selected := opts
+			selected.Targets = []string{target}
+			runBenchmark(selected)
+		}
+		return
+	}
+
 	var context featurevisor.Context
 	if opts.Context != "" {
 		json.Unmarshal([]byte(opts.Context), &context)
@@ -159,16 +168,16 @@ func runBenchmark(opts CLIOptions) {
 	fmt.Printf("Running benchmark for feature \"%s\"...\n", opts.Feature)
 	fmt.Println("")
 
-	fmt.Printf("Building datafile containing all features for \"%s\"...\n", opts.Environment)
 	datafileBuildStart := time.Now()
-	datafilesByEnvironment := buildDatafiles(featurevisorProjectPath, []string{opts.Environment}, opts.Inflate)
+	var target *string
+	if len(opts.Targets) == 1 {
+		target = &opts.Targets[0]
+	}
+	datafile := buildDatafileJSON(featurevisorProjectPath, &opts.Environment, opts.Inflate, target)
 	datafileBuildDuration := time.Since(datafileBuildStart)
 	// Convert to milliseconds to match TypeScript behavior
 	datafileBuildDurationMs := datafileBuildDuration.Milliseconds()
 	fmt.Printf("Datafile build duration: %dms\n", datafileBuildDurationMs)
-
-	// Create SDK instance
-	datafile := datafilesByEnvironment[opts.Environment]
 
 	// Convert datafile to proper format
 	var datafileContent featurevisor.DatafileContent
@@ -180,6 +189,9 @@ func runBenchmark(opts CLIOptions) {
 
 	// Calculate datafile size
 	datafileSize := len(datafileBytes)
+	if target != nil {
+		fmt.Printf("Target: %s\n", *target)
+	}
 	fmt.Printf("Datafile size: %.2f kB\n", float64(datafileSize)/1024.0)
 
 	instance := featurevisor.NewFeaturevisor(featurevisor.Options{

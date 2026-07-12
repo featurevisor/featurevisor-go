@@ -16,6 +16,13 @@ func TestParseCLIOptionsAcceptsLegacyIgnoredFlags(t *testing.T) {
 	}
 }
 
+func TestParseCLIOptionsAcceptsRepeatedTargets(t *testing.T) {
+	opts := ParseCLIOptions([]string{"--target=web", "--target=mobile", "--target=web"})
+	if len(opts.Targets) != 2 || opts.Targets[0] != "web" || opts.Targets[1] != "mobile" {
+		t.Fatalf("unexpected targets: %#v", opts.Targets)
+	}
+}
+
 func TestTargetDatafileCacheKey(t *testing.T) {
 	if got := targetDatafileCacheKey(nil, "checkout"); got != "false-target-checkout" {
 		t.Fatalf("expected false-target-checkout, got %s", got)
