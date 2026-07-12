@@ -9,7 +9,7 @@ test:
 
 test-example-1:
 	go test ./...
-	go run cmd/main.go test --projectDirectoryPath=/Users/fahad/Projects/featurevisor/featurevisor/examples/example-1 --onlyFailures
+	go run cmd/main.go test --projectDirectoryPath=../featurevisor/examples/example-1 --onlyFailures
 
 clean:
 	rm -rf build

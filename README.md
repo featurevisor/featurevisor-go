@@ -2,7 +2,7 @@
 
 This is a port of Featurevisor [Javascript SDK](https://featurevisor.com/docs/sdks/javascript/) v3.x to Go, providing a way to evaluate feature flags, variations, and variables in your Go applications.
 
-This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 projects and v2 datafiles.
+This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 projects (and also v2 datafiles).
 
 See example application [here](https://github.com/featurevisor/featurevisor-example-go).
 
@@ -531,7 +531,6 @@ Modules can also subscribe to diagnostics or report their own from `Setup` via t
 Every diagnostic has `Level`, `Code`, `Message`, and an object-shaped `Details` map. Optional `Module`, `ModuleName`, and `OriginalError` fields describe provenance. Evaluation metadata belongs in `Details`.
 
 Diagnostic handlers are isolated from SDK behavior. A panic in a handler does not stop other handlers or evaluations.
-
 
 ## Events
 
