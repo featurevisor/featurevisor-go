@@ -5,7 +5,7 @@ const FeaturevisorDiagnosticPrefix = "[Featurevisor]"
 // FeaturevisorDiagnostic is emitted by the SDK and modules for logs/errors.
 type FeaturevisorDiagnostic struct {
 	Level         LogLevel               `json:"level"`
-	Code          string                 `json:"code,omitempty"`
+	Code          string                 `json:"code"`
 	Message       string                 `json:"message"`
 	Module        string                 `json:"module,omitempty"`
 	ModuleName    string                 `json:"moduleName,omitempty"`

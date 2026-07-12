@@ -910,7 +910,7 @@ func parseDatafileInput(datafile interface{}) (DatafileContent, error) {
 		if err := datafileContent.FromJSON(value); err != nil {
 			return DatafileContent{}, fmt.Errorf("invalid datafile string: %w", err)
 		}
-		return datafileContent, nil
+		return validateDatafileContent(datafileContent)
 	case map[string]interface{}:
 		bytes, err := json.Marshal(value)
 		if err != nil {
@@ -921,15 +921,23 @@ func parseDatafileInput(datafile interface{}) (DatafileContent, error) {
 			return DatafileContent{}, fmt.Errorf("invalid datafile map: %w", err)
 		}
 
-		return datafileContent, nil
+		return validateDatafileContent(datafileContent)
 	case DatafileContent:
-		return value, nil
+		return validateDatafileContent(value)
 	case *DatafileContent:
 		if value == nil {
 			return DatafileContent{}, fmt.Errorf("datafile pointer is nil")
 		}
-		return *value, nil
+		return validateDatafileContent(*value)
 	default:
 		return DatafileContent{}, fmt.Errorf("unsupported datafile input type: %T", datafile)
 	}
+}
+
+func validateDatafileContent(datafile DatafileContent) (DatafileContent, error) {
+	if datafile.SchemaVersion == "" || datafile.Revision == "" || datafile.Segments == nil || datafile.Features == nil {
+		return DatafileContent{}, fmt.Errorf("invalid datafile")
+	}
+
+	return datafile, nil
 }
