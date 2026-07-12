@@ -10,7 +10,7 @@ type FeaturevisorDiagnostic struct {
 	Module        string                 `json:"module,omitempty"`
 	ModuleName    string                 `json:"moduleName,omitempty"`
 	OriginalError interface{}            `json:"originalError,omitempty"`
-	Details       map[string]interface{} `json:"details,omitempty"`
+	Details       map[string]interface{} `json:"details"`
 }
 
 // FeaturevisorModuleReportedDiagnostic is a diagnostic reported by a module.

@@ -597,6 +597,8 @@ unsubscribe := f.On(featurevisor.EventNameError, func(details featurevisor.Event
 })
 ```
 
+The `error` event is emitted for diagnostics whose level is `error`.
+
 ## Evaluation details
 
 Besides logging with debug level enabled, you can also get more details about how the feature variations and variables are evaluated in the runtime against given context:
