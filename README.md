@@ -45,6 +45,7 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
   - [Registering modules](#registering-modules)
 - [Child instance](#child-instance)
 - [Close](#close)
+- [OpenFeature](#openfeature)
 - [CLI usage](#cli-usage)
   - [Test](#test)
   - [Benchmark](#benchmark)
@@ -838,6 +839,61 @@ go run cmd/main.go assess-distribution \
     --populateUuid=deviceId \
     --n=1000
 ```
+
+## OpenFeature
+
+The OpenFeature provider is a separate Go module, so applications that do not use OpenFeature do not receive its dependencies:
+
+```bash
+go get github.com/featurevisor/featurevisor-go/openfeature
+```
+
+```go
+import (
+    "context"
+
+    featurevisor "github.com/featurevisor/featurevisor-go"
+    featurevisorof "github.com/featurevisor/featurevisor-go/openfeature"
+    of "github.com/open-feature/go-sdk/openfeature"
+)
+
+provider := featurevisorof.NewProvider(featurevisorof.Options{
+    FeaturevisorOptions: featurevisor.FeaturevisorOptions{
+        Datafile: datafileContent,
+    },
+})
+
+if err := of.SetProviderAndWait(provider); err != nil {
+    panic(err)
+}
+
+client := of.NewClient("")
+enabled, err := client.BooleanValue(
+    context.Background(),
+    "checkout",
+    false,
+    of.NewEvaluationContext("user-123", map[string]any{"country": "nl"}),
+)
+```
+
+Use `checkout` for a flag, `checkout:variation` for its variation, and `checkout:title` for its `title` variable. Boolean variables use the boolean resolver. Arrays, objects, and JSON variables use the object resolver.
+
+OpenFeature's targeting key maps to `userId` by default. `TargetingKeyField`, `KeySeparator`, and `VariationKey` can customize the mapping. The provider's separate module follows the Go version requirement of the official OpenFeature Go SDK.
+
+You can also reuse an existing Featurevisor instance:
+
+```go
+fv := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
+    Datafile: datafileContent,
+})
+provider := featurevisorof.NewProvider(featurevisorof.Options{
+    Featurevisor: fv,
+})
+```
+
+The caller owns an instance passed this way. Provider shutdown does not close it. Call `fv.Close()` when every consumer is finished with it. When the provider creates the instance from `FeaturevisorOptions`, the provider owns and closes it. If both fields are supplied, `Featurevisor` takes precedence over `FeaturevisorOptions`.
+
+See the [OpenFeature provider guide](https://featurevisor.com/docs/sdks/openfeature/) for resolution reasons, errors, metadata, tracking, lifecycle, and providers for other languages.
 
 <!-- FEATUREVISOR_DOCS_END -->
 
