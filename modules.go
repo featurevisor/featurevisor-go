@@ -52,7 +52,7 @@ func getModuleName(module *FeaturevisorModule) string {
 // modulesManagerOptions contains options for creating a modules manager.
 type modulesManagerOptions struct {
 	Modules                            []*FeaturevisorModule
-	ReportDiagnostic                   FeaturevisorDiagnosticReporter
+	ReportDiagnostic                   featurevisorDiagnosticReporter
 	GetModuleApi                       func(module *FeaturevisorModule) FeaturevisorModuleApi
 	ClearModuleDiagnosticSubscriptions func(module *FeaturevisorModule)
 }
@@ -60,7 +60,7 @@ type modulesManagerOptions struct {
 // modulesManager manages Featurevisor modules.
 type modulesManager struct {
 	modules                            []*FeaturevisorModule
-	reportDiagnostic                   FeaturevisorDiagnosticReporter
+	reportDiagnostic                   featurevisorDiagnosticReporter
 	getModuleApi                       func(module *FeaturevisorModule) FeaturevisorModuleApi
 	clearModuleDiagnosticSubscriptions func(module *FeaturevisorModule)
 }

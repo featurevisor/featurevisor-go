@@ -65,7 +65,7 @@ func TestGetValueFromContext(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetValueFromContext(context, tt.path)
+			result := getValueFromContext(context, tt.path)
 			if tt.expected == nil {
 				// Skip comparison for nil expected values
 				return
@@ -206,7 +206,7 @@ func TestConditionIsMatched(t *testing.T) {
 				Value:     conditionValue([]interface{}{"premium", "active"}),
 			},
 			context:  context,
-			expected: true,
+			expected: false, // `in` only accepts a primitive context value
 		},
 		{
 			name: "includes in array",
@@ -253,7 +253,7 @@ func TestConditionIsMatched(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ConditionIsMatched(tt.condition, tt.context, getRegex)
+			result := conditionIsMatched(tt.condition, tt.context, getRegex)
 			if result != tt.expected {
 				t.Errorf("conditionIsMatched() = %v, expected %v", result, tt.expected)
 			}
@@ -305,7 +305,7 @@ func TestConditionIsMatchedDate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ConditionIsMatched(tt.condition, tt.context, getRegex)
+			result := conditionIsMatched(tt.condition, tt.context, getRegex)
 			if result != tt.expected {
 				t.Errorf("conditionIsMatched() = %v, expected %v", result, tt.expected)
 			}
@@ -313,9 +313,118 @@ func TestConditionIsMatchedDate(t *testing.T) {
 	}
 }
 
+func TestConditionJavaScriptPrimitiveParity(t *testing.T) {
+	getRegex := func(pattern string, flags string) *regexp.Regexp {
+		return regexp.MustCompile(pattern)
+	}
+	value := func(value interface{}) *ConditionValue {
+		conditionValue := ConditionValue(value)
+		return &conditionValue
+	}
+
+	tests := []struct {
+		name      string
+		condition PlainCondition
+		context   Context
+		expected  bool
+	}{
+		{"number is not string", PlainCondition{Attribute: "value", Operator: OperatorEquals, Value: value(1)}, Context{"value": "1"}, false},
+		{"number is not boolean", PlainCondition{Attribute: "value", Operator: OperatorEquals, Value: value(1)}, Context{"value": true}, false},
+		{"explicit null exists", PlainCondition{Attribute: "value", Operator: OperatorExists}, Context{"value": nil}, true},
+		{"explicit null is not missing", PlainCondition{Attribute: "value", Operator: OperatorNotExists}, Context{"value": nil}, false},
+		{"in is strict", PlainCondition{Attribute: "value", Operator: OperatorIn, Value: value([]interface{}{1})}, Context{"value": "1"}, false},
+		{"includes number", PlainCondition{Attribute: "values", Operator: OperatorIncludes, Value: value(1)}, Context{"values": []interface{}{1, true, nil}}, true},
+		{"includes boolean", PlainCondition{Attribute: "values", Operator: OperatorIncludes, Value: value(true)}, Context{"values": []interface{}{1, true, nil}}, true},
+		{"includes null", PlainCondition{Attribute: "values", Operator: OperatorIncludes, Value: value(nil)}, Context{"values": []interface{}{1, true, nil}}, true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if actual := conditionIsMatched(test.condition, test.context, getRegex); actual != test.expected {
+				t.Fatalf("got %v, want %v", actual, test.expected)
+			}
+		})
+	}
+}
+
+func TestConditionSupportsNativeGoNumberTypes(t *testing.T) {
+	getRegex := func(pattern string, flags string) *regexp.Regexp {
+		return regexp.MustCompile(pattern)
+	}
+	tests := []struct {
+		name     string
+		context  interface{}
+		expected interface{}
+		operator Operator
+	}{
+		{"int8", int8(2), int16(1), OperatorGreaterThan},
+		{"int64", int64(2), int32(2), OperatorGreaterThanOrEquals},
+		{"uint32", uint32(2), uint8(3), OperatorLessThan},
+		{"float32", float32(2.5), float64(2.5), OperatorLessThanOrEquals},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			condition := PlainCondition{
+				Attribute: "value",
+				Operator:  test.operator,
+				Value:     conditionValue(test.expected),
+			}
+			if !conditionIsMatched(condition, Context{"value": test.context}, getRegex) {
+				t.Fatalf("expected %#v %s %#v to match", test.context, test.operator, test.expected)
+			}
+		})
+	}
+}
+
+func TestConditionSupportsNativeGoPrimitiveSlices(t *testing.T) {
+	getRegex := func(pattern string, flags string) *regexp.Regexp {
+		return regexp.MustCompile(pattern)
+	}
+	tests := []struct {
+		name    string
+		context interface{}
+		value   interface{}
+	}{
+		{"strings", []string{"admin", "editor"}, "editor"},
+		{"integers", []int64{1, 2}, int32(2)},
+		{"booleans", []bool{false, true}, true},
+		{"array", [2]uint16{3, 4}, uint8(4)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			includes := PlainCondition{
+				Attribute: "values",
+				Operator:  OperatorIncludes,
+				Value:     conditionValue(test.value),
+			}
+			if !conditionIsMatched(includes, Context{"values": test.context}, getRegex) {
+				t.Fatalf("expected %#v to include %#v", test.context, test.value)
+			}
+
+			notIncludes := includes
+			notIncludes.Operator = OperatorNotIncludes
+			notIncludes.Value = conditionValue("missing")
+			if !conditionIsMatched(notIncludes, Context{"values": test.context}, getRegex) {
+				t.Fatalf("expected %#v not to include missing", test.context)
+			}
+		})
+	}
+
+	in := PlainCondition{
+		Attribute: "value",
+		Operator:  OperatorIn,
+		Value:     conditionValue([]string{"nl", "de"}),
+	}
+	if !conditionIsMatched(in, Context{"value": "nl"}, getRegex) {
+		t.Fatal("expected a native []string condition value to support in")
+	}
+}
+
 // TestConditionIsMatchedComprehensive tests all operators comprehensively
 func TestConditionIsMatchedComprehensive(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -328,9 +437,9 @@ func TestConditionIsMatchedComprehensive(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	// Test wildcard conditions
@@ -624,6 +733,22 @@ func TestConditionIsMatchedComprehensive(t *testing.T) {
 		if !reader.AllConditionsAreMatched(condition, context) {
 			t.Error("semverLessThanOrEquals operator should match")
 		}
+		condition = PlainCondition{
+			Attribute: "version",
+			Operator:  OperatorSemverLessThan,
+			Value:     conditionValue("1.2.3"),
+		}
+		if !reader.AllConditionsAreMatched(condition, Context{"version": "1.2.3-beta.1"}) {
+			t.Error("prerelease should be less than release")
+		}
+		condition = PlainCondition{
+			Attribute: "version",
+			Operator:  OperatorSemverEquals,
+			Value:     conditionValue("1.2.3+build.9"),
+		}
+		if !reader.AllConditionsAreMatched(condition, Context{"version": "1.2.3+build.5"}) {
+			t.Error("build metadata should not affect semver equality")
+		}
 
 		// before
 		condition = PlainCondition{
@@ -634,6 +759,12 @@ func TestConditionIsMatchedComprehensive(t *testing.T) {
 		context = Context{"date": "2023-05-12T00:00:00Z"}
 		if !reader.AllConditionsAreMatched(condition, context) {
 			t.Error("before operator should match")
+		}
+		if reader.AllConditionsAreMatched(condition, Context{"date": "2023-05-12T00:00:00"}) {
+			t.Error("timezone-free date should not match")
+		}
+		if reader.AllConditionsAreMatched(condition, Context{"date": "2023-05-13T17:23:59+01:00"}) {
+			t.Error("equivalent offset instant should not be before")
 		}
 
 		// after
@@ -769,7 +900,7 @@ func TestConditionIsMatchedEdgeCases(t *testing.T) {
 				Value:     conditionValue([]interface{}{"chrome", "firefox"}),
 			},
 			context:  Context{"browser_types": []interface{}{"chrome", "safari"}},
-			expected: true, // chrome is in both arrays
+			expected: false, // arrays are not valid context values for `in`
 		},
 		{
 			name: "array context value with notIn operator",
@@ -846,7 +977,7 @@ func TestConditionIsMatchedEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ConditionIsMatched(tt.condition, tt.context, getRegex)
+			result := conditionIsMatched(tt.condition, tt.context, getRegex)
 			if result != tt.expected {
 				t.Errorf("conditionIsMatched() = %v, expected %v", result, tt.expected)
 			}
@@ -855,7 +986,7 @@ func TestConditionIsMatchedEdgeCases(t *testing.T) {
 }
 
 func TestConditionIsMatchedComplexNested(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -868,9 +999,9 @@ func TestConditionIsMatchedComplexNested(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	// Test complex nested conditions similar to TypeScript tests
@@ -965,6 +1096,6 @@ func BenchmarkConditionIsMatched(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ConditionIsMatched(condition, context, getRegex)
+		conditionIsMatched(condition, context, getRegex)
 	}
 }

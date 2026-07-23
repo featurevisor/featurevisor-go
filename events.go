@@ -2,28 +2,28 @@ package featurevisor
 
 // getParamsForDatafileSetEvent gets parameters for datafile set event
 func getParamsForDatafileSetEvent(
-	previousDatafileReader *datafileReader,
-	newDatafileReader *datafileReader,
+	previousInstanceEvaluationDataProvider *instanceEvaluationDataProvider,
+	newInstanceEvaluationDataProvider *instanceEvaluationDataProvider,
 	replace bool,
 ) logDetails {
 	previousRevision := ""
-	if previousDatafileReader != nil {
-		previousRevision = previousDatafileReader.GetRevision()
+	if previousInstanceEvaluationDataProvider != nil {
+		previousRevision = previousInstanceEvaluationDataProvider.GetRevision()
 	}
 
 	newRevision := ""
-	if newDatafileReader != nil {
-		newRevision = newDatafileReader.GetRevision()
+	if newInstanceEvaluationDataProvider != nil {
+		newRevision = newInstanceEvaluationDataProvider.GetRevision()
 	}
 
 	previousFeatureKeys := []string{}
-	if previousDatafileReader != nil {
-		previousFeatureKeys = previousDatafileReader.GetFeatureKeys()
+	if previousInstanceEvaluationDataProvider != nil {
+		previousFeatureKeys = previousInstanceEvaluationDataProvider.GetFeatureKeys()
 	}
 
 	newFeatureKeys := []string{}
-	if newDatafileReader != nil {
-		newFeatureKeys = newDatafileReader.GetFeatureKeys()
+	if newInstanceEvaluationDataProvider != nil {
+		newFeatureKeys = newInstanceEvaluationDataProvider.GetFeatureKeys()
 	}
 
 	// Find removed features
@@ -47,8 +47,8 @@ func getParamsForDatafileSetEvent(
 		for _, newFeatureKey := range newFeatureKeys {
 			if previousFeatureKey == newFeatureKey {
 				// Check if feature was changed by comparing hashes
-				previousFeature := previousDatafileReader.GetFeature(FeatureKey(previousFeatureKey))
-				newFeature := newDatafileReader.GetFeature(FeatureKey(newFeatureKey))
+				previousFeature := previousInstanceEvaluationDataProvider.GetFeature(FeatureKey(previousFeatureKey))
+				newFeature := newInstanceEvaluationDataProvider.GetFeature(FeatureKey(newFeatureKey))
 
 				if previousFeature != nil && newFeature != nil {
 					// Compare hashes if available, otherwise assume changed

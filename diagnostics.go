@@ -1,7 +1,5 @@
 package featurevisor
 
-const FeaturevisorDiagnosticPrefix = "[Featurevisor]"
-
 // FeaturevisorDiagnostic is emitted by the SDK and modules for logs/errors.
 type FeaturevisorDiagnostic struct {
 	Level         LogLevel               `json:"level"`
@@ -19,8 +17,7 @@ type FeaturevisorModuleReportedDiagnostic = FeaturevisorDiagnostic
 // FeaturevisorDiagnosticHandler handles diagnostics.
 type FeaturevisorDiagnosticHandler func(diagnostic FeaturevisorDiagnostic)
 
-// FeaturevisorDiagnosticReporter reports diagnostics, optionally from a source module.
-type FeaturevisorDiagnosticReporter func(
+type featurevisorDiagnosticReporter func(
 	diagnostic FeaturevisorDiagnostic,
 	sourceModule *FeaturevisorModule,
 )
@@ -34,6 +31,15 @@ type FeaturevisorModuleDiagnosticOptions struct {
 type FeaturevisorUnsubscribe func()
 
 func shouldLogDiagnostic(currentLevel LogLevel, targetLevel LogLevel) bool {
-	logger := newLogger(loggerOptions{Level: &currentLevel})
-	return logger.shouldHandle(targetLevel)
+	currentIndex := -1
+	targetIndex := -1
+	for index, level := range allLevels {
+		if level == currentLevel {
+			currentIndex = index
+		}
+		if level == targetLevel {
+			targetIndex = index
+		}
+	}
+	return currentIndex != -1 && targetIndex != -1 && targetIndex <= currentIndex
 }

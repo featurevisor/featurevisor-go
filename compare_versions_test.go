@@ -54,17 +54,17 @@ func TestValidateAndParse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ValidateAndParse(tt.version)
+			result, err := validateAndParse(tt.version)
 			if tt.expectError {
 				if err == nil {
-					t.Errorf("ValidateAndParse(%s) expected error but got none", tt.version)
+					t.Errorf("validateAndParse(%s) expected error but got none", tt.version)
 				}
 			} else {
 				if err != nil {
-					t.Errorf("ValidateAndParse(%s) unexpected error: %v", tt.version, err)
+					t.Errorf("validateAndParse(%s) unexpected error: %v", tt.version, err)
 				}
 				if len(result) == 0 {
-					t.Errorf("ValidateAndParse(%s) returned empty result", tt.version)
+					t.Errorf("validateAndParse(%s) returned empty result", tt.version)
 				}
 			}
 		})
@@ -86,9 +86,9 @@ func TestIsWildcard(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := IsWildcard(tt.input)
+			result := isWildcard(tt.input)
 			if result != tt.expected {
-				t.Errorf("IsWildcard(%s) = %v, expected %v", tt.input, result, tt.expected)
+				t.Errorf("isWildcard(%s) = %v, expected %v", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -108,9 +108,9 @@ func TestTryParse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := TryParse(tt.input)
+			result := tryParse(tt.input)
 			if result != tt.expected {
-				t.Errorf("TryParse(%s) = %v, expected %v", tt.input, result, tt.expected)
+				t.Errorf("tryParse(%s) = %v, expected %v", tt.input, result, tt.expected)
 			}
 		})
 	}
@@ -137,9 +137,9 @@ func TestCompareStrings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CompareStrings(tt.a, tt.b)
+			result := compareStrings(tt.a, tt.b)
 			if result != tt.expected {
-				t.Errorf("CompareStrings(%s, %s) = %d, expected %d", tt.a, tt.b, result, tt.expected)
+				t.Errorf("compareStrings(%s, %s) = %d, expected %d", tt.a, tt.b, result, tt.expected)
 			}
 		})
 	}
@@ -163,9 +163,9 @@ func TestCompareSegments(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := CompareSegments(tt.a, tt.b)
+			result := compareSegments(tt.a, tt.b)
 			if result != tt.expected {
-				t.Errorf("CompareSegments(%v, %v) = %d, expected %d", tt.a, tt.b, result, tt.expected)
+				t.Errorf("compareSegments(%v, %v) = %d, expected %d", tt.a, tt.b, result, tt.expected)
 			}
 		})
 	}
@@ -265,17 +265,17 @@ func TestCompareVersions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := CompareVersions(tt.v1, tt.v2)
+			result, err := compareVersions(tt.v1, tt.v2)
 			if tt.expectError {
 				if err == nil {
-					t.Errorf("CompareVersions(%s, %s) expected error but got none", tt.v1, tt.v2)
+					t.Errorf("compareVersions(%s, %s) expected error but got none", tt.v1, tt.v2)
 				}
 			} else {
 				if err != nil {
-					t.Errorf("CompareVersions(%s, %s) unexpected error: %v", tt.v1, tt.v2, err)
+					t.Errorf("compareVersions(%s, %s) unexpected error: %v", tt.v1, tt.v2, err)
 				}
 				if result != tt.expected {
-					t.Errorf("CompareVersions(%s, %s) = %d, expected %d", tt.v1, tt.v2, result, tt.expected)
+					t.Errorf("compareVersions(%s, %s) = %d, expected %d", tt.v1, tt.v2, result, tt.expected)
 				}
 			}
 		})
@@ -288,6 +288,6 @@ func BenchmarkCompareVersions(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		CompareVersions(v1, v2)
+		compareVersions(v1, v2)
 	}
 }

@@ -2,23 +2,30 @@ package featurevisor
 
 import "fmt"
 
-// ChildOptions contains options for creating a child instance
-type ChildOptions struct {
+// childOptions contains options for creating a child instance
+type childOptions struct {
 	Parent  *Featurevisor
 	Context Context
 	Sticky  *StickyFeatures
 }
 
+type childParentSubscription struct {
+	id          uint64
+	unsubscribe Unsubscribe
+}
+
 // FeaturevisorChild represents a child Featurevisor instance
 type FeaturevisorChild struct {
-	parent  *Featurevisor
-	context Context
-	sticky  *StickyFeatures
-	emitter *emitter
+	parent              *Featurevisor
+	context             Context
+	sticky              *StickyFeatures
+	emitter             *emitter
+	parentSubscriptions []childParentSubscription
+	nextSubscriptionID  uint64
 }
 
 // newFeaturevisorChild creates a new child instance.
-func newFeaturevisorChild(options ChildOptions) *FeaturevisorChild {
+func newFeaturevisorChild(options childOptions) *FeaturevisorChild {
 	return &FeaturevisorChild{
 		parent:  options.Parent,
 		context: options.Context,
@@ -33,11 +40,37 @@ func (c *FeaturevisorChild) On(eventName EventName, callback EventCallback) Unsu
 		return c.emitter.On(eventName, callback)
 	}
 
-	return c.parent.On(eventName, callback)
+	parentUnsubscribe := c.parent.On(eventName, callback)
+	active := true
+	c.nextSubscriptionID++
+	subscriptionID := c.nextSubscriptionID
+	var unsubscribe Unsubscribe
+	unsubscribe = func() {
+		if !active {
+			return
+		}
+		active = false
+		parentUnsubscribe()
+		for index, subscription := range c.parentSubscriptions {
+			if subscription.id == subscriptionID {
+				c.parentSubscriptions = append(c.parentSubscriptions[:index], c.parentSubscriptions[index+1:]...)
+				break
+			}
+		}
+	}
+	c.parentSubscriptions = append(c.parentSubscriptions, childParentSubscription{
+		id:          subscriptionID,
+		unsubscribe: unsubscribe,
+	})
+	return unsubscribe
 }
 
 // Close closes child instance listeners
 func (c *FeaturevisorChild) Close() {
+	for _, subscription := range append([]childParentSubscription{}, c.parentSubscriptions...) {
+		subscription.unsubscribe()
+	}
+	c.parentSubscriptions = nil
 	c.emitter.ClearAll()
 }
 
@@ -108,7 +141,7 @@ func (c *FeaturevisorChild) SetSticky(sticky StickyFeatures, replace ...bool) {
 }
 
 // getEvaluationDependencies gets evaluation dependencies
-func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options OverrideOptions) EvaluateDependencies {
+func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options OverrideOptions) evaluateDependencies {
 	var sticky *StickyFeatures
 	if options.sticky != nil {
 		sticky = options.sticky
@@ -116,33 +149,49 @@ func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options O
 		sticky = c.sticky
 	}
 
-	return EvaluateDependencies{
-		Context:               c.GetContext(context),
-		featurevisorLogger:    c.parent.logger,
-		modulesManager:        c.parent.modulesManager,
-		datafileReader:        c.parent.datafileReader,
-		sticky:                sticky,
-		DefaultVariationValue: options.DefaultVariationValue,
-		DefaultVariableValue:  options.DefaultVariableValue,
+	return evaluateDependencies{
+		Context:                        c.GetContext(context),
+		diagnosticReporter:             c.parent.diagnostics,
+		modulesManager:                 c.parent.modulesManager,
+		instanceEvaluationDataProvider: c.parent.instanceEvaluationDataProvider,
+		sticky:                         sticky,
+		DefaultVariationValue:          options.DefaultVariationValue,
+		DefaultVariableValue:           options.DefaultVariableValue,
+		DefaultVariableValueSet:        options.DefaultVariableValueSet,
 	}
 }
 
-// EvaluateFlag evaluates a feature flag
-func (c *FeaturevisorChild) EvaluateFlag(featureKey string, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithModules(EvaluateOptions{
-		EvaluateParams: EvaluateParams{
+func (c *FeaturevisorChild) evaluateFlag(featureKey string, context Context, options OverrideOptions) Evaluation {
+	return evaluateWithModules(EvaluateOptions{
+		evaluateParams: evaluateParams{
 			Type:       EvaluationTypeFlag,
 			FeatureKey: FeatureKey(featureKey),
 		},
-		EvaluateDependencies: c.getEvaluationDependencies(context, options),
+		evaluateDependencies: c.getEvaluationDependencies(context, options),
 	})
+}
+
+// EvaluateFlag evaluates a feature flag and returns its full evaluation details.
+func (c *FeaturevisorChild) EvaluateFlag(featureKey string, args ...interface{}) Evaluation {
+	contextValue := Context{}
+	optionsValue := OverrideOptions{}
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case Context:
+			contextValue = v
+		case OverrideOptions:
+			optionsValue = v
+		}
+	}
+
+	return c.evaluateFlag(featureKey, contextValue, optionsValue)
 }
 
 // IsEnabled checks if a feature is enabled
 func (c *FeaturevisorChild) IsEnabled(featureKey string, args ...interface{}) bool {
 	defer func() {
 		if r := recover(); r != nil {
-			c.parent.logger.Error("isEnabled", logDetails{
+			c.parent.diagnostics.Error("isEnabled", logDetails{
 				"featureKey": featureKey,
 				"error":      r,
 			})
@@ -163,7 +212,7 @@ func (c *FeaturevisorChild) IsEnabled(featureKey string, args ...interface{}) bo
 		}
 	}
 
-	evaluation := c.EvaluateFlag(featureKey, contextValue, optionsValue)
+	evaluation := c.evaluateFlag(featureKey, contextValue, optionsValue)
 
 	if evaluation.Enabled != nil {
 		return *evaluation.Enabled
@@ -172,22 +221,37 @@ func (c *FeaturevisorChild) IsEnabled(featureKey string, args ...interface{}) bo
 	return false
 }
 
-// EvaluateVariation evaluates a feature variation
-func (c *FeaturevisorChild) EvaluateVariation(featureKey string, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithModules(EvaluateOptions{
-		EvaluateParams: EvaluateParams{
+func (c *FeaturevisorChild) evaluateVariation(featureKey string, context Context, options OverrideOptions) Evaluation {
+	return evaluateWithModules(EvaluateOptions{
+		evaluateParams: evaluateParams{
 			Type:       EvaluationTypeVariation,
 			FeatureKey: FeatureKey(featureKey),
 		},
-		EvaluateDependencies: c.getEvaluationDependencies(context, options),
+		evaluateDependencies: c.getEvaluationDependencies(context, options),
 	})
+}
+
+// EvaluateVariation evaluates a variation and returns its full evaluation details.
+func (c *FeaturevisorChild) EvaluateVariation(featureKey string, args ...interface{}) Evaluation {
+	contextValue := Context{}
+	optionsValue := OverrideOptions{}
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case Context:
+			contextValue = v
+		case OverrideOptions:
+			optionsValue = v
+		}
+	}
+
+	return c.evaluateVariation(featureKey, contextValue, optionsValue)
 }
 
 // GetVariation gets a feature variation
 func (c *FeaturevisorChild) GetVariation(featureKey string, args ...interface{}) *string {
 	defer func() {
 		if r := recover(); r != nil {
-			c.parent.logger.Error("getVariation", logDetails{
+			c.parent.diagnostics.Error("getVariation", logDetails{
 				"featureKey": featureKey,
 				"error":      r,
 			})
@@ -208,7 +272,7 @@ func (c *FeaturevisorChild) GetVariation(featureKey string, args ...interface{})
 		}
 	}
 
-	evaluation := c.EvaluateVariation(featureKey, contextValue, optionsValue)
+	evaluation := c.evaluateVariation(featureKey, contextValue, optionsValue)
 
 	if evaluation.VariationValue != nil {
 		// VariationValue is already a string type alias
@@ -225,23 +289,38 @@ func (c *FeaturevisorChild) GetVariation(featureKey string, args ...interface{})
 	return nil
 }
 
-// EvaluateVariable evaluates a feature variable
-func (c *FeaturevisorChild) EvaluateVariable(featureKey string, variableKey VariableKey, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithModules(EvaluateOptions{
-		EvaluateParams: EvaluateParams{
+func (c *FeaturevisorChild) evaluateVariable(featureKey string, variableKey VariableKey, context Context, options OverrideOptions) Evaluation {
+	return evaluateWithModules(EvaluateOptions{
+		evaluateParams: evaluateParams{
 			Type:        EvaluationTypeVariable,
 			FeatureKey:  FeatureKey(featureKey),
 			VariableKey: &variableKey,
 		},
-		EvaluateDependencies: c.getEvaluationDependencies(context, options),
+		evaluateDependencies: c.getEvaluationDependencies(context, options),
 	})
+}
+
+// EvaluateVariable evaluates a variable and returns its full evaluation details.
+func (c *FeaturevisorChild) EvaluateVariable(featureKey string, variableKey string, args ...interface{}) Evaluation {
+	contextValue := Context{}
+	optionsValue := OverrideOptions{}
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case Context:
+			contextValue = v
+		case OverrideOptions:
+			optionsValue = v
+		}
+	}
+
+	return c.evaluateVariable(featureKey, VariableKey(variableKey), contextValue, optionsValue)
 }
 
 // GetVariable gets a feature variable
 func (c *FeaturevisorChild) GetVariable(featureKey string, variableKey string, args ...interface{}) VariableValue {
 	defer func() {
 		if r := recover(); r != nil {
-			c.parent.logger.Error("getVariable", logDetails{
+			c.parent.diagnostics.Error("getVariable", logDetails{
 				"featureKey":  featureKey,
 				"variableKey": variableKey,
 				"error":       r,
@@ -263,7 +342,7 @@ func (c *FeaturevisorChild) GetVariable(featureKey string, variableKey string, a
 		}
 	}
 
-	evaluation := c.EvaluateVariable(featureKey, VariableKey(variableKey), contextValue, optionsValue)
+	evaluation := c.evaluateVariable(featureKey, VariableKey(variableKey), contextValue, optionsValue)
 
 	if evaluation.VariableValue != nil {
 		return evaluation.VariableValue
@@ -279,7 +358,7 @@ func (c *FeaturevisorChild) GetVariableBoolean(featureKey string, variableKey st
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "boolean")
+	typedValue := getValueByType(value, "boolean")
 	if boolValue, ok := typedValue.(bool); ok {
 		return &boolValue
 	}
@@ -294,7 +373,7 @@ func (c *FeaturevisorChild) GetVariableString(featureKey string, variableKey str
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "string")
+	typedValue := getValueByType(value, "string")
 	if stringValue, ok := typedValue.(string); ok {
 		return &stringValue
 	}
@@ -309,7 +388,7 @@ func (c *FeaturevisorChild) GetVariableInteger(featureKey string, variableKey st
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "integer")
+	typedValue := getValueByType(value, "integer")
 	if intValue, ok := typedValue.(int); ok {
 		return &intValue
 	}
@@ -324,7 +403,7 @@ func (c *FeaturevisorChild) GetVariableDouble(featureKey string, variableKey str
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "double")
+	typedValue := getValueByType(value, "double")
 	if floatValue, ok := typedValue.(float64); ok {
 		return &floatValue
 	}
@@ -339,7 +418,7 @@ func (c *FeaturevisorChild) GetVariableArray(featureKey string, variableKey stri
 		return nil
 	}
 
-	return ToTypedArray[string](GetValueByType(value, "array"))
+	return toTypedArray[string](getValueByType(value, "array"))
 }
 
 // GetVariableObject gets an object variable
@@ -349,7 +428,7 @@ func (c *FeaturevisorChild) GetVariableObject(featureKey string, variableKey str
 		return nil
 	}
 
-	typedValue := ToTypedObject[map[string]interface{}](GetValueByType(value, "object"))
+	typedValue := toTypedObject[map[string]interface{}](getValueByType(value, "object"))
 	if typedValue == nil {
 		return nil
 	}
@@ -380,7 +459,7 @@ func (c *FeaturevisorChild) GetVariableArrayInto(featureKey string, variableKey 
 		return decodeInto(nil, out)
 	}
 
-	arrayValue := GetValueByType(value, "array")
+	arrayValue := getValueByType(value, "array")
 	if arrayValue == nil {
 		return fmt.Errorf("variable %q is not an array", variableKey)
 	}
@@ -401,7 +480,7 @@ func (c *FeaturevisorChild) GetVariableObjectInto(featureKey string, variableKey
 		return decodeInto(nil, out)
 	}
 
-	objectValue := GetValueByType(value, "object")
+	objectValue := getValueByType(value, "object")
 	if objectValue == nil {
 		return fmt.Errorf("variable %q is not an object", variableKey)
 	}
@@ -416,7 +495,7 @@ func (c *FeaturevisorChild) GetAllEvaluations(context Context, featureKeys []str
 	keys := featureKeys
 	if len(keys) == 0 {
 		// Get all feature keys from parent
-		allKeys := c.parent.datafileReader.GetFeatureKeys()
+		allKeys := c.parent.instanceEvaluationDataProvider.GetFeatureKeys()
 		keys = make([]string, len(allKeys))
 		for j, key := range allKeys {
 			keys[j] = string(key)
@@ -430,7 +509,7 @@ func (c *FeaturevisorChild) GetAllEvaluations(context Context, featureKeys []str
 		}
 
 		// variation
-		if c.parent.datafileReader.HasVariations(FeatureKey(featureKey)) {
+		if c.parent.instanceEvaluationDataProvider.HasVariations(FeatureKey(featureKey)) {
 			variation := c.GetVariation(featureKey, context, options)
 			if variation != nil {
 				evaluatedFeature.Variation = variation
@@ -438,7 +517,7 @@ func (c *FeaturevisorChild) GetAllEvaluations(context Context, featureKeys []str
 		}
 
 		// variables
-		variableKeys := c.parent.datafileReader.GetVariableKeys(FeatureKey(featureKey))
+		variableKeys := c.parent.instanceEvaluationDataProvider.GetVariableKeys(FeatureKey(featureKey))
 		if len(variableKeys) > 0 {
 			evaluatedFeature.Variables = make(map[VariableKey]VariableValue)
 			for _, variableKey := range variableKeys {

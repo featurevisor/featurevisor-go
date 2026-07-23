@@ -7,9 +7,9 @@ import (
 	"reflect"
 )
 
-// GetValueByType converts a value to the specified type
+// getValueByType converts a value to the specified type
 // This function mirrors the TypeScript getValueByType function
-func GetValueByType(value interface{}, fieldType string) interface{} {
+func getValueByType(value interface{}, fieldType string) interface{} {
 	if value == nil {
 		return nil
 	}
@@ -82,7 +82,7 @@ func convertToTypedValue[T any](value interface{}) (T, bool) {
 	return converted, true
 }
 
-func ToTypedArray[T any](value interface{}) []T {
+func toTypedArray[T any](value interface{}) []T {
 	if value == nil {
 		return nil
 	}
@@ -108,7 +108,7 @@ func ToTypedArray[T any](value interface{}) []T {
 	return result
 }
 
-func ToTypedObject[T any](value interface{}) *T {
+func toTypedObject[T any](value interface{}) *T {
 	if value == nil {
 		return nil
 	}

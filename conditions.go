@@ -1,16 +1,102 @@
 package featurevisor
 
 import (
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
 )
 
-// GetRegex is a function type for getting regex patterns
-type GetRegex func(regexString string, regexFlags string) *regexp.Regexp
+func numericValue(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case int:
+		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	default:
+		return 0, false
+	}
+}
 
-// PathExists checks if a path exists in a context object
-func PathExists(obj map[string]interface{}, path string) bool {
+func primitiveSliceValues(value interface{}) ([]interface{}, bool) {
+	if value == nil {
+		return nil, false
+	}
+
+	reflected := reflect.ValueOf(value)
+	if reflected.Kind() != reflect.Array && reflected.Kind() != reflect.Slice {
+		return nil, false
+	}
+
+	values := make([]interface{}, reflected.Len())
+	for index := 0; index < reflected.Len(); index++ {
+		item := reflected.Index(index).Interface()
+		if !isConditionPrimitive(item) {
+			return nil, false
+		}
+		values[index] = item
+	}
+
+	return values, true
+}
+
+func strictPrimitiveEqual(left interface{}, right interface{}) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	if leftNumber, ok := numericValue(left); ok {
+		rightNumber, rightIsNumber := numericValue(right)
+		return rightIsNumber && leftNumber == rightNumber
+	}
+	switch leftValue := left.(type) {
+	case string:
+		rightValue, ok := right.(string)
+		return ok && leftValue == rightValue
+	case bool:
+		rightValue, ok := right.(bool)
+		return ok && leftValue == rightValue
+	}
+	return false
+}
+
+func isConditionPrimitive(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	if _, ok := value.(string); ok {
+		return true
+	}
+	if _, ok := value.(bool); ok {
+		return true
+	}
+	_, ok := numericValue(value)
+	return ok
+}
+
+type getRegex func(regexString string, regexFlags string) *regexp.Regexp
+
+// pathExists checks if a path exists in a context object
+func pathExists(obj map[string]interface{}, path string) bool {
 	if !strings.Contains(path, ".") {
 		_, exists := obj[path]
 		return exists
@@ -37,8 +123,8 @@ func PathExists(obj map[string]interface{}, path string) bool {
 	return true
 }
 
-// GetValueFromContext extracts a value from a context object using a dot-separated path
-func GetValueFromContext(obj map[string]interface{}, path string) interface{} {
+// getValueFromContext extracts a value from a context object using a dot-separated path
+func getValueFromContext(obj map[string]interface{}, path string) interface{} {
 	if !strings.Contains(path, ".") {
 		return obj[path]
 	}
@@ -61,20 +147,22 @@ func GetValueFromContext(obj map[string]interface{}, path string) interface{} {
 	return current
 }
 
-// ConditionIsMatched checks if a condition is matched given a context
-func ConditionIsMatched(
+// conditionIsMatched checks if a condition is matched given a context
+func conditionIsMatched(
 	condition PlainCondition,
 	context Context,
-	getRegex GetRegex,
+	getRegex getRegex,
 ) bool {
-	contextValueFromPath := GetValueFromContext(context, string(condition.Attribute))
+	attribute := string(condition.Attribute)
+	contextValueFromPath := getValueFromContext(context, attribute)
+	attributeExists := pathExists(context, attribute)
 
 	// Handle nil values
 	if condition.Value == nil {
 		if condition.Operator == OperatorExists {
-			return contextValueFromPath != nil
+			return attributeExists
 		} else if condition.Operator == OperatorNotExists {
-			return contextValueFromPath == nil
+			return !attributeExists
 		}
 		return false
 	}
@@ -83,9 +171,9 @@ func ConditionIsMatched(
 
 	// equals / notEquals
 	if condition.Operator == OperatorEquals {
-		return contextValueFromPath == value
+		return attributeExists && strictPrimitiveEqual(contextValueFromPath, value)
 	} else if condition.Operator == OperatorNotEquals {
-		return contextValueFromPath != value
+		return !attributeExists || !strictPrimitiveEqual(contextValueFromPath, value)
 	}
 
 	// before / after (date comparisons)
@@ -101,11 +189,7 @@ func ConditionIsMatched(
 		case string:
 			dateInContext, err = time.Parse(time.RFC3339, v)
 			if err != nil {
-				// Try other common formats
-				dateInContext, err = time.Parse("2006-01-02", v)
-				if err != nil {
-					return false
-				}
+				return false
 			}
 		default:
 			return false
@@ -118,11 +202,7 @@ func ConditionIsMatched(
 		case string:
 			dateInCondition, err = time.Parse(time.RFC3339, v)
 			if err != nil {
-				// Try other common formats
-				dateInCondition, err = time.Parse("2006-01-02", v)
-				if err != nil {
-					return false
-				}
+				return false
 			}
 		default:
 			return false
@@ -136,69 +216,23 @@ func ConditionIsMatched(
 	}
 
 	// in / notIn (where condition value is an array)
-	if valueArray, ok := value.([]interface{}); ok {
-		if contextValueFromPath == nil {
-			if condition.Operator == OperatorIn {
-				return false
-			} else if condition.Operator == OperatorNotIn {
-				// Check if the path exists in the context first (like PHP implementation)
-				if !PathExists(context, string(condition.Attribute)) {
-					return false
-				}
-				// null is not in the array, so return true
-				return true
+	if valueArray, ok := primitiveSliceValues(value); ok {
+		_, isString := contextValueFromPath.(string)
+		_, isNumber := numericValue(contextValueFromPath)
+		if !attributeExists || (!isString && !isNumber && contextValueFromPath != nil) {
+			return false
+		}
+		matched := false
+		for _, item := range valueArray {
+			if strictPrimitiveEqual(item, contextValueFromPath) {
+				matched = true
+				break
 			}
 		}
-
-		// Handle case where context value is also an array
-		if contextArray, ok := contextValueFromPath.([]interface{}); ok {
-			// For arrays in context, check if any element from context array is in condition array
-			if condition.Operator == OperatorIn {
-				for _, contextItem := range contextArray {
-					for _, conditionItem := range valueArray {
-						if contextItem == conditionItem {
-							return true
-						}
-					}
-				}
-				return false
-			} else if condition.Operator == OperatorNotIn {
-				// For notIn with array context values, return false (like PHP implementation)
-				// PHP only handles notIn for string, numeric, or null context values
-				return false
-			}
-		} else {
-			// Context value is a single value
-			valueInContext := contextValueFromPath
-
-			// Only handle in/notIn for string, numeric, or null context values (like PHP implementation)
-			switch valueInContext.(type) {
-			case string, int, float64, bool:
-				if condition.Operator == OperatorIn {
-					// Check if context value is in the condition's array
-					for _, item := range valueArray {
-						if item == valueInContext {
-							return true
-						}
-					}
-					return false
-				} else if condition.Operator == OperatorNotIn {
-					// Check if the path exists in the context first (like PHP implementation)
-					if !PathExists(context, string(condition.Attribute)) {
-						return false
-					}
-					// Check if context value is NOT in the condition's array
-					for _, item := range valueArray {
-						if item == valueInContext {
-							return false
-						}
-					}
-					return true
-				}
-			default:
-				// For other types (like objects, arrays), don't match in/notIn conditions
-				return false
-			}
+		if condition.Operator == OperatorIn {
+			return matched
+		} else if condition.Operator == OperatorNotIn {
+			return !matched
 		}
 	}
 
@@ -215,23 +249,41 @@ func ConditionIsMatched(
 			case OperatorEndsWith:
 				return strings.HasSuffix(contextValueStr, valueStr)
 			case OperatorSemverEquals:
-				result, err := CompareVersions(contextValueStr, valueStr)
-				return err == nil && result == 0
+				result, err := compareVersions(contextValueStr, valueStr)
+				if err != nil {
+					panic(err)
+				}
+				return result == 0
 			case OperatorSemverNotEquals:
-				result, err := CompareVersions(contextValueStr, valueStr)
-				return err == nil && result != 0
+				result, err := compareVersions(contextValueStr, valueStr)
+				if err != nil {
+					panic(err)
+				}
+				return result != 0
 			case OperatorSemverGreaterThan:
-				result, err := CompareVersions(contextValueStr, valueStr)
-				return err == nil && result == 1
+				result, err := compareVersions(contextValueStr, valueStr)
+				if err != nil {
+					panic(err)
+				}
+				return result == 1
 			case OperatorSemverGreaterThanOrEquals:
-				result, err := CompareVersions(contextValueStr, valueStr)
-				return err == nil && result >= 0
+				result, err := compareVersions(contextValueStr, valueStr)
+				if err != nil {
+					panic(err)
+				}
+				return result >= 0
 			case OperatorSemverLessThan:
-				result, err := CompareVersions(contextValueStr, valueStr)
-				return err == nil && result == -1
+				result, err := compareVersions(contextValueStr, valueStr)
+				if err != nil {
+					panic(err)
+				}
+				return result == -1
 			case OperatorSemverLessThanOrEquals:
-				result, err := CompareVersions(contextValueStr, valueStr)
-				return err == nil && result <= 0
+				result, err := compareVersions(contextValueStr, valueStr)
+				if err != nil {
+					panic(err)
+				}
+				return result <= 0
 			case OperatorMatches:
 				regexFlags := ""
 				if condition.RegexFlags != nil {
@@ -250,90 +302,43 @@ func ConditionIsMatched(
 		}
 	}
 
-	// Numeric operations
-	if contextValueNum, ok := contextValueFromPath.(float64); ok {
-		if valueNum, ok := value.(float64); ok {
+	// Numeric operations use the same cross-number comparison for every native Go number type.
+	if contextValueNumber, contextIsNumber := numericValue(contextValueFromPath); contextIsNumber {
+		if conditionValueNumber, conditionIsNumber := numericValue(value); conditionIsNumber {
 			switch condition.Operator {
 			case OperatorGreaterThan:
-				return contextValueNum > valueNum
+				return contextValueNumber > conditionValueNumber
 			case OperatorGreaterThanOrEquals:
-				return contextValueNum >= valueNum
+				return contextValueNumber >= conditionValueNumber
 			case OperatorLessThan:
-				return contextValueNum < valueNum
+				return contextValueNumber < conditionValueNumber
 			case OperatorLessThanOrEquals:
-				return contextValueNum <= valueNum
-			}
-		}
-	}
-
-	// Handle integer types
-	if contextValueInt, ok := contextValueFromPath.(int); ok {
-		if valueInt, ok := value.(int); ok {
-			switch condition.Operator {
-			case OperatorGreaterThan:
-				return contextValueInt > valueInt
-			case OperatorGreaterThanOrEquals:
-				return contextValueInt >= valueInt
-			case OperatorLessThan:
-				return contextValueInt < valueInt
-			case OperatorLessThanOrEquals:
-				return contextValueInt <= valueInt
-			}
-		}
-	}
-
-	// Handle mixed numeric types
-	if contextValueFloat, ok := contextValueFromPath.(float64); ok {
-		if valueInt, ok := value.(int); ok {
-			switch condition.Operator {
-			case OperatorGreaterThan:
-				return contextValueFloat > float64(valueInt)
-			case OperatorGreaterThanOrEquals:
-				return contextValueFloat >= float64(valueInt)
-			case OperatorLessThan:
-				return contextValueFloat < float64(valueInt)
-			case OperatorLessThanOrEquals:
-				return contextValueFloat <= float64(valueInt)
-			}
-		}
-	}
-
-	if contextValueInt, ok := contextValueFromPath.(int); ok {
-		if valueFloat, ok := value.(float64); ok {
-			switch condition.Operator {
-			case OperatorGreaterThan:
-				return float64(contextValueInt) > valueFloat
-			case OperatorGreaterThanOrEquals:
-				return float64(contextValueInt) >= valueFloat
-			case OperatorLessThan:
-				return float64(contextValueInt) < valueFloat
-			case OperatorLessThanOrEquals:
-				return float64(contextValueInt) <= valueFloat
+				return contextValueNumber <= conditionValueNumber
 			}
 		}
 	}
 
 	// exists / notExists
 	if condition.Operator == OperatorExists {
-		return contextValueFromPath != nil
+		return attributeExists
 	} else if condition.Operator == OperatorNotExists {
-		return contextValueFromPath == nil
+		return !attributeExists
 	}
 
 	// includes / notIncludes (where context value is an array)
-	if contextValueArray, ok := contextValueFromPath.([]interface{}); ok {
-		if valueStr, ok := value.(string); ok {
+	if contextValueArray, ok := primitiveSliceValues(contextValueFromPath); ok {
+		if isConditionPrimitive(value) {
 			switch condition.Operator {
 			case OperatorIncludes:
 				for _, item := range contextValueArray {
-					if itemStr, ok := item.(string); ok && itemStr == valueStr {
+					if strictPrimitiveEqual(item, value) {
 						return true
 					}
 				}
 				return false
 			case OperatorNotIncludes:
 				for _, item := range contextValueArray {
-					if itemStr, ok := item.(string); ok && itemStr == valueStr {
+					if strictPrimitiveEqual(item, value) {
 						return false
 					}
 				}

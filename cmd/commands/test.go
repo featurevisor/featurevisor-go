@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/featurevisor/featurevisor-go"
+	"github.com/featurevisor/featurevisor-go/v2"
 )
 
 // TestFeature tests a feature with the given assertion
@@ -89,6 +89,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 			if defaultValues, ok := assertion["defaultVariableValues"].(map[string]interface{}); ok {
 				if defaultVal, ok := defaultValues[variableKey]; ok {
 					overrideOptions.DefaultVariableValue = defaultVal
+					overrideOptions.DefaultVariableValueSet = true
 				}
 			}
 
@@ -232,6 +233,52 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 		}
 	}
 
+	// Test expectedEvaluations
+	if expectedEvaluations, ok := assertion["expectedEvaluations"].(map[string]interface{}); ok {
+		if flagEvals, ok := expectedEvaluations["flag"].(map[string]interface{}); ok {
+			evaluation := instance.EvaluateFlag(featureKey, context, overrideOptions)
+			for key, expectedValue := range flagEvals {
+				actualValue := getEvaluationValue(evaluation, key)
+				if !compareValues(actualValue, expectedValue) {
+					hasError = true
+					errors += fmt.Sprintf("      ✘ expectedEvaluations.flag.%s: expected %v but received %v\n", key, expectedValue, actualValue)
+				}
+			}
+		}
+
+		if variationEvals, ok := expectedEvaluations["variation"].(map[string]interface{}); ok {
+			evaluation := instance.EvaluateVariation(featureKey, context, overrideOptions)
+			for key, expectedValue := range variationEvals {
+				actualValue := getEvaluationValue(evaluation, key)
+				if !compareValues(actualValue, expectedValue) {
+					hasError = true
+					errors += fmt.Sprintf("      ✘ expectedEvaluations.variation.%s: expected %v but received %v\n", key, expectedValue, actualValue)
+				}
+			}
+		}
+
+		if variableEvals, ok := expectedEvaluations["variables"].(map[string]interface{}); ok {
+			for variableKey, expectedEval := range variableEvals {
+				expectedEvalMap, ok := expectedEval.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				variableOptions := overrideOptions
+				variableOptions.DefaultVariableValue, variableOptions.DefaultVariableValueSet =
+					getDefaultVariableValue(assertion, variableKey)
+				evaluation := instance.EvaluateVariable(featureKey, variableKey, context, variableOptions)
+				for key, expectedValue := range expectedEvalMap {
+					actualValue := getEvaluationValue(evaluation, key)
+					if !compareValues(actualValue, expectedValue) {
+						hasError = true
+						errors += fmt.Sprintf("      ✘ expectedEvaluations.variables.%s.%s: expected %v but received %v\n", variableKey, key, expectedValue, actualValue)
+					}
+				}
+			}
+		}
+	}
+
 	duration := time.Since(startTime).Seconds()
 
 	return AssertionResult{
@@ -291,6 +338,7 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 			if defaultValues, ok := assertion["defaultVariableValues"].(map[string]interface{}); ok {
 				if defaultVal, ok := defaultValues[variableKey]; ok {
 					overrideOptions.DefaultVariableValue = defaultVal
+					overrideOptions.DefaultVariableValueSet = true
 				}
 			}
 
@@ -333,6 +381,51 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 			if !compareValues(actualValue, expectedValue) {
 				hasError = true
 				errors += fmt.Sprintf("      ✘ expectedVariables.%s: expected %v but received %v\n", variableKey, expectedValue, actualValue)
+			}
+		}
+	}
+
+	if expectedEvaluations, ok := assertion["expectedEvaluations"].(map[string]interface{}); ok {
+		if flagEvaluations, ok := expectedEvaluations["flag"].(map[string]interface{}); ok {
+			evaluation := instance.EvaluateFlag(featureKey, context, overrideOptions)
+			for key, expectedValue := range flagEvaluations {
+				actualValue := getEvaluationValue(evaluation, key)
+				if !compareValues(actualValue, expectedValue) {
+					hasError = true
+					errors += fmt.Sprintf("      ✘ expectedEvaluations.flag.%s: expected %v but received %v\n", key, expectedValue, actualValue)
+				}
+			}
+		}
+
+		if variationEvaluations, ok := expectedEvaluations["variation"].(map[string]interface{}); ok {
+			evaluation := instance.EvaluateVariation(featureKey, context, overrideOptions)
+			for key, expectedValue := range variationEvaluations {
+				actualValue := getEvaluationValue(evaluation, key)
+				if !compareValues(actualValue, expectedValue) {
+					hasError = true
+					errors += fmt.Sprintf("      ✘ expectedEvaluations.variation.%s: expected %v but received %v\n", key, expectedValue, actualValue)
+				}
+			}
+		}
+
+		if variableEvaluations, ok := expectedEvaluations["variables"].(map[string]interface{}); ok {
+			for variableKey, expectedEvaluationValue := range variableEvaluations {
+				expectedEvaluation, ok := expectedEvaluationValue.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				variableOptions := overrideOptions
+				variableOptions.DefaultVariableValue, variableOptions.DefaultVariableValueSet =
+					getDefaultVariableValue(assertion, variableKey)
+				evaluation := instance.EvaluateVariable(featureKey, variableKey, context, variableOptions)
+				for key, expectedValue := range expectedEvaluation {
+					actualValue := getEvaluationValue(evaluation, key)
+					if !compareValues(actualValue, expectedValue) {
+						hasError = true
+						errors += fmt.Sprintf("      ✘ expectedEvaluations.variables.%s.%s: expected %v but received %v\n", variableKey, key, expectedValue, actualValue)
+					}
+				}
 			}
 		}
 	}
@@ -455,15 +548,13 @@ func getEvaluationValue(evaluation featurevisor.Evaluation, key string) interfac
 	}
 }
 
-func getDefaultVariableValue(assertion map[string]interface{}, variableKey string) featurevisor.VariableValue {
+func getDefaultVariableValue(assertion map[string]interface{}, variableKey string) (featurevisor.VariableValue, bool) {
 	if defaultValues, ok := assertion["defaultVariableValues"].(map[string]interface{}); ok {
 		if defaultVal, ok := defaultValues[variableKey]; ok {
-			if val, ok := defaultVal.(featurevisor.VariableValue); ok {
-				return val
-			}
+			return defaultVal, true
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // compareSlices compares two slices for equality

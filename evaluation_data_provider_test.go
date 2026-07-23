@@ -1,11 +1,42 @@
 package featurevisor
 
 import (
+	"sync"
 	"testing"
 )
 
-func TestNewDatafileReader(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+func TestConcurrentConditionEvaluationsShareRegexCacheSafely(t *testing.T) {
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "concurrent",
+			Segments:      map[SegmentKey]Segment{},
+			Features:      map[FeatureKey]Feature{},
+		},
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{}),
+	})
+	condition := map[string]interface{}{
+		"attribute":  "browser",
+		"operator":   "matches",
+		"value":      "^chrome$",
+		"regexFlags": "i",
+	}
+
+	var waitGroup sync.WaitGroup
+	for index := 0; index < 100; index++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			if !reader.AllConditionsAreMatched(condition, Context{"browser": "Chrome"}) {
+				t.Error("expected concurrent condition to match")
+			}
+		}()
+	}
+	waitGroup.Wait()
+}
+
+func TestNewInstanceEvaluationDataProvider(t *testing.T) {
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "test-revision",
@@ -18,13 +49,13 @@ func TestNewDatafileReader(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	if reader == nil {
-		t.Error("newDatafileReader should return a non-nil reader")
+		t.Error("newInstanceEvaluationDataProvider should return a non-nil reader")
 	}
 
 	if reader.GetRevision() != "test-revision" {
@@ -36,8 +67,8 @@ func TestNewDatafileReader(t *testing.T) {
 	}
 }
 
-func TestDatafileReaderGetRegex(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+func TestInstanceEvaluationDataProviderGetRegex(t *testing.T) {
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "test-revision",
@@ -50,28 +81,28 @@ func TestDatafileReaderGetRegex(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	// Test regex caching
-	regex1 := reader.GetRegex("test", "")
-	regex2 := reader.GetRegex("test", "")
+	regex1 := reader.getRegex("test", "")
+	regex2 := reader.getRegex("test", "")
 
 	if regex1 != regex2 {
 		t.Error("GetRegex should return the same regex object for the same pattern")
 	}
 
 	// Test different patterns
-	regex3 := reader.GetRegex("test2", "")
+	regex3 := reader.getRegex("test2", "")
 	if regex1 == regex3 {
 		t.Error("GetRegex should return different regex objects for different patterns")
 	}
 }
 
-func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+func TestInstanceEvaluationDataProviderAllConditionsAreMatched(t *testing.T) {
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "test-revision",
@@ -84,9 +115,9 @@ func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	context := Context{
@@ -177,9 +208,9 @@ func TestDatafileReaderAllConditionsAreMatched(t *testing.T) {
 	}
 }
 
-// TestDatafileReaderComprehensive tests comprehensive datafile reader functionality
-func TestDatafileReaderComprehensive(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+// TestInstanceEvaluationDataProviderComprehensive tests comprehensive datafile reader functionality
+func TestInstanceEvaluationDataProviderComprehensive(t *testing.T) {
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 
 	// Create a comprehensive datafile with segments and features
 	jsonDatafile := `{
@@ -236,9 +267,9 @@ func TestDatafileReaderComprehensive(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	t.Run("basic functionality", func(t *testing.T) {
@@ -358,8 +389,8 @@ func TestDatafileReaderComprehensive(t *testing.T) {
 	})
 }
 
-func TestDatafileReaderSegmentMatching(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+func TestInstanceEvaluationDataProviderSegmentMatching(t *testing.T) {
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 
 	// Create segments for comprehensive testing
 	jsonDatafile := `{
@@ -391,9 +422,9 @@ func TestDatafileReaderSegmentMatching(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	t.Run("dutch mobile users", func(t *testing.T) {
@@ -534,8 +565,8 @@ func TestDatafileReaderSegmentMatching(t *testing.T) {
 	})
 }
 
-func TestDatafileReaderForceMatching(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+func TestInstanceEvaluationDataProviderForceMatching(t *testing.T) {
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -583,9 +614,9 @@ func TestDatafileReaderForceMatching(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	t.Run("force by conditions", func(t *testing.T) {
@@ -631,8 +662,8 @@ func TestDatafileReaderForceMatching(t *testing.T) {
 	})
 }
 
-func TestDatafileReaderStringifiedParsing(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+func TestInstanceEvaluationDataProviderStringifiedParsing(t *testing.T) {
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -650,9 +681,9 @@ func TestDatafileReaderStringifiedParsing(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	t.Run("parse stringified conditions", func(t *testing.T) {
@@ -717,8 +748,8 @@ func TestDatafileReaderStringifiedParsing(t *testing.T) {
 	})
 }
 
-func TestDatafileReaderErrorHandling(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+func TestInstanceEvaluationDataProviderErrorHandling(t *testing.T) {
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1",
@@ -736,9 +767,9 @@ func TestDatafileReaderErrorHandling(t *testing.T) {
 		t.Fatalf("Failed to parse datafile JSON: %v", err)
 	}
 
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           datafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	t.Run("handle invalid JSON in conditions", func(t *testing.T) {

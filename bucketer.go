@@ -2,12 +2,15 @@ package featurevisor
 
 import (
 	"fmt"
+	"math"
+	"reflect"
+	"strconv"
 	"strings"
 )
 
 const (
-	HASH_SEED           = 1
-	MAX_HASH_VALUE      = 1 << 32
+	hashSeed            = 1
+	maxHashValue        = 1 << 32
 	MAX_BUCKETED_NUMBER = 100000 // 100% * 1000 to include three decimal places in the same integer value
 )
 
@@ -17,31 +20,31 @@ type BucketKey = string
 // BucketValue represents a bucket value (0 to 100,000)
 type BucketValue = int
 
-// GetBucketKeyOptions contains options for getting a bucket key
-type GetBucketKeyOptions struct {
+// getBucketKeyOptions contains options for getting a bucket key
+type getBucketKeyOptions struct {
 	FeatureKey         FeatureKey
 	BucketBy           BucketBy
 	Context            Context
-	featurevisorLogger *featurevisorLogger
+	diagnosticReporter *diagnosticReporter
 }
 
-// DEFAULT_BUCKET_KEY_SEPARATOR is the default separator for bucket keys
-const DEFAULT_BUCKET_KEY_SEPARATOR = "."
+// defaultBucketKeySeparator is the default separator for bucket keys
+const defaultBucketKeySeparator = "."
 
-// GetBucketedNumber returns a bucketed number for a given bucket key
-func GetBucketedNumber(bucketKey string) BucketValue {
-	hashValue := MurmurHashV3(bucketKey, HASH_SEED)
-	ratio := float64(hashValue) / float64(MAX_HASH_VALUE)
+// getBucketedNumber returns a bucketed number for a given bucket key
+func getBucketedNumber(bucketKey string) BucketValue {
+	hashValue := murmurHashV3(bucketKey, hashSeed)
+	ratio := float64(hashValue) / float64(maxHashValue)
 
 	return int(ratio * float64(MAX_BUCKETED_NUMBER))
 }
 
-// GetBucketKey returns a bucket key based on the feature key, bucket by configuration, and context
-func GetBucketKey(options GetBucketKeyOptions) BucketKey {
+// getBucketKey returns a bucket key based on the feature key, bucket by configuration, and context
+func getBucketKey(options getBucketKeyOptions) BucketKey {
 	featureKey := options.FeatureKey
 	bucketBy := options.BucketBy
 	context := options.Context
-	logger := options.featurevisorLogger
+	diagnostics := options.diagnosticReporter
 
 	var bucketType string
 	var attributeKeys []string
@@ -90,7 +93,7 @@ func GetBucketKey(options GetBucketKeyOptions) BucketKey {
 			}
 		}
 	default:
-		logger.Error("invalid bucketBy", logDetails{
+		diagnostics.Error("invalid bucketBy", logDetails{
 			"featureKey": featureKey,
 			"bucketBy":   bucketBy,
 		})
@@ -101,9 +104,9 @@ func GetBucketKey(options GetBucketKeyOptions) BucketKey {
 
 	// Process each attribute key
 	for _, attributeKey := range attributeKeys {
-		attributeValue := GetValueFromContext(context, attributeKey)
+		attributeValue := getValueFromContext(context, attributeKey)
 
-		if attributeValue == nil {
+		if attributeValue == nil && !pathExists(context, attributeKey) {
 			continue
 		}
 
@@ -126,7 +129,7 @@ func GetBucketKey(options GetBucketKeyOptions) BucketKey {
 		bucketKeyStrings[i] = toString(value)
 	}
 
-	result := strings.Join(bucketKeyStrings, DEFAULT_BUCKET_KEY_SEPARATOR)
+	result := strings.Join(bucketKeyStrings, defaultBucketKeySeparator)
 
 	return result
 }
@@ -139,14 +142,55 @@ func toString(value interface{}) string {
 	case int:
 		return fmt.Sprintf("%d", v)
 	case float64:
-		return fmt.Sprintf("%.0f", v)
+		return javascriptFloat(v, 64)
+	case float32:
+		return javascriptFloat(float64(v), 32)
 	case bool:
 		if v {
 			return "true"
 		}
 		return "false"
+	case nil:
+		return ""
 	default:
-		// For other types, try to convert to string
+		valueOf := reflect.ValueOf(value)
+		if valueOf.IsValid() && (valueOf.Kind() == reflect.Slice || valueOf.Kind() == reflect.Array) {
+			parts := make([]string, valueOf.Len())
+			for index := 0; index < valueOf.Len(); index++ {
+				parts[index] = toString(valueOf.Index(index).Interface())
+			}
+			return strings.Join(parts, ",")
+		}
+		if valueOf.IsValid() && valueOf.Kind() == reflect.Map {
+			return "[object Object]"
+		}
 		return fmt.Sprintf("%v", v)
 	}
+}
+
+func javascriptFloat(value float64, bitSize int) string {
+	if math.IsNaN(value) {
+		return "NaN"
+	}
+	if math.IsInf(value, 1) {
+		return "Infinity"
+	}
+	if math.IsInf(value, -1) {
+		return "-Infinity"
+	}
+	if value == 0 {
+		return "0"
+	}
+
+	absolute := math.Abs(value)
+	format := byte('f')
+	if absolute >= 1e21 || absolute < 1e-6 {
+		format = 'g'
+	}
+	result := strconv.FormatFloat(value, format, -1, bitSize)
+	if exponentIndex := strings.IndexByte(result, 'e'); exponentIndex != -1 {
+		exponent, _ := strconv.Atoi(result[exponentIndex+1:])
+		return fmt.Sprintf("%se%+d", result[:exponentIndex], exponent)
+	}
+	return result
 }

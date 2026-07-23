@@ -51,9 +51,9 @@ func TestMurmurHashV3(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MurmurHashV3(tt.key, tt.seed)
+			result := murmurHashV3(tt.key, tt.seed)
 			if result != tt.expected {
-				t.Errorf("MurmurHashV3(%v, %d) = %d, want %d", tt.key, tt.seed, result, tt.expected)
+				t.Errorf("murmurHashV3(%v, %d) = %d, want %d", tt.key, tt.seed, result, tt.expected)
 			}
 		})
 	}
@@ -64,11 +64,11 @@ func TestMurmurHashV3Consistency(t *testing.T) {
 	key := "test_key"
 	seed := uint32(42)
 
-	result1 := MurmurHashV3(key, seed)
-	result2 := MurmurHashV3(key, seed)
+	result1 := murmurHashV3(key, seed)
+	result2 := murmurHashV3(key, seed)
 
 	if result1 != result2 {
-		t.Errorf("MurmurHashV3 is not consistent: %d != %d", result1, result2)
+		t.Errorf("murmurHashV3 is not consistent: %d != %d", result1, result2)
 	}
 }
 
@@ -76,11 +76,11 @@ func TestMurmurHashV3DifferentSeeds(t *testing.T) {
 	key := "test_key"
 
 	// Test that different seeds produce different results
-	result1 := MurmurHashV3(key, 0)
-	result2 := MurmurHashV3(key, 1)
+	result1 := murmurHashV3(key, 0)
+	result2 := murmurHashV3(key, 1)
 
 	if result1 == result2 {
-		t.Errorf("MurmurHashV3 with different seeds should produce different results: %d == %d", result1, result2)
+		t.Errorf("murmurHashV3 with different seeds should produce different results: %d == %d", result1, result2)
 	}
 }
 
@@ -90,6 +90,6 @@ func BenchmarkMurmurHashV3(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		MurmurHashV3(key, seed)
+		murmurHashV3(key, seed)
 	}
 }

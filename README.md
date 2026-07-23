@@ -45,6 +45,7 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
   - [Registering modules](#registering-modules)
 - [Child instance](#child-instance)
 - [Close](#close)
+- [OpenFeature](#openfeature)
 - [CLI usage](#cli-usage)
   - [Test](#test)
   - [Benchmark](#benchmark)
@@ -62,7 +63,7 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
 In your Go application, install the SDK using Go modules:
 
 ```bash
-go get github.com/featurevisor/featurevisor-go
+go get github.com/featurevisor/featurevisor-go/v2
 ```
 
 ## Public API
@@ -77,6 +78,8 @@ f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
 
 Most applications only need `CreateFeaturevisor`, the `Featurevisor` instance type, and `FeaturevisorOptions`. Public extension and observability types include `FeaturevisorModule`, `FeaturevisorDiagnostic`, and the datafile model types.
 
+Concurrent evaluations are safe after an instance is configured. Do not call state-changing methods such as `SetDatafile`, `SetContext`, `SetSticky`, `AddModule`, `RemoveModule`, or `Close` concurrently with evaluations or with each other. Apply those changes from a serialized update path. Module, event, and diagnostic callbacks must synchronize mutable state that they capture.
+
 ## Initialization
 
 The SDK can be initialized by passing [datafile](https://featurevisor.com/docs/building-datafiles/) content directly:
@@ -88,7 +91,7 @@ import (
     "io"
     "net/http"
 
-    "github.com/featurevisor/featurevisor-go"
+    "github.com/featurevisor/featurevisor-go/v2"
 )
 
 func main() {
@@ -150,7 +153,7 @@ You can set context at the time of initialization:
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go"
+    "github.com/featurevisor/featurevisor-go/v2"
 )
 
 f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
@@ -335,7 +338,7 @@ Sticky values belong to an SDK or child instance. Evaluation options do not acce
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go"
+    "github.com/featurevisor/featurevisor-go/v2"
 )
 
 f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
@@ -462,7 +465,7 @@ import (
     "io"
     "net/http"
 
-    "github.com/featurevisor/featurevisor-go"
+    "github.com/featurevisor/featurevisor-go/v2"
 )
 
 func updateDatafile(f *featurevisor.Featurevisor, datafileURL string) {
@@ -643,7 +646,7 @@ If `Setup` panics, the module is not registered. Featurevisor removes subscripti
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go"
+    "github.com/featurevisor/featurevisor-go/v2"
 )
 
 myCustomModule := &featurevisor.FeaturevisorModule{
@@ -702,7 +705,7 @@ You can register modules at the time of SDK initialization:
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go"
+    "github.com/featurevisor/featurevisor-go/v2"
 )
 
 f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
@@ -720,6 +723,8 @@ removeModule()
 ```
 
 ## Child instance
+
+A child snapshots the parent keys that exist when it is spawned. Child values win for those keys. Parent keys introduced later are still inherited. Calling `Close()` removes both child-owned listeners and subscriptions delegated to the parent.
 
 When dealing with purely client-side applications, it is understandable that there is only one user involved, like in browser or mobile applications.
 
@@ -746,8 +751,11 @@ Similar to parent SDK, child instances also support several additional methods:
 
 - `SetContext`
 - `SetSticky`
+- `EvaluateFlag`
 - `IsEnabled`
+- `EvaluateVariation`
 - `GetVariation`
+- `EvaluateVariable`
 - `GetVariable`
 - `GetVariableBoolean`
 - `GetVariableString`
@@ -798,12 +806,12 @@ go run cmd/main.go test \
 If you want to validate parity locally against the JavaScript SDK runner, you can use the bundled example project:
 
 ```bash
-cd /Users/fahad/Projects/featurevisor/featurevisor/examples/example-1
+cd ../featurevisor/examples/example-1
 npx featurevisor test
 
 # from this Go SDK repository root:
 go run cmd/main.go test \
-  --projectDirectoryPath="/Users/fahad/Projects/featurevisor/featurevisor/examples/example-1" \
+  --projectDirectoryPath="../featurevisor/examples/example-1" \
   --onlyFailures
 
 # or:
@@ -839,6 +847,61 @@ go run cmd/main.go assess-distribution \
     --n=1000
 ```
 
+## OpenFeature
+
+The OpenFeature provider is a separate Go module, so applications that do not use OpenFeature do not receive its dependencies:
+
+```bash
+go get github.com/featurevisor/featurevisor-go/openfeature/v2
+```
+
+```go
+import (
+    "context"
+
+    featurevisor "github.com/featurevisor/featurevisor-go/v2"
+    featurevisorof "github.com/featurevisor/featurevisor-go/openfeature/v2"
+    of "github.com/open-feature/go-sdk/openfeature"
+)
+
+provider := featurevisorof.NewProvider(featurevisorof.Options{
+    FeaturevisorOptions: featurevisor.FeaturevisorOptions{
+        Datafile: datafileContent,
+    },
+})
+
+if err := of.SetProviderAndWait(provider); err != nil {
+    panic(err)
+}
+
+client := of.NewClient("")
+enabled, err := client.BooleanValue(
+    context.Background(),
+    "checkout",
+    false,
+    of.NewEvaluationContext("user-123", map[string]any{"country": "nl"}),
+)
+```
+
+Use `checkout` for a flag, `checkout:variation` for its variation, and `checkout:title` for its `title` variable. Boolean variables use the boolean resolver. Arrays, objects, and JSON variables use the object resolver.
+
+OpenFeature's targeting key maps to `userId` by default. `TargetingKeyField`, `KeySeparator`, and `VariationKey` can customize the mapping. The provider's separate module follows the Go version requirement of the official OpenFeature Go SDK.
+
+You can also reuse an existing Featurevisor instance:
+
+```go
+fv := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
+    Datafile: datafileContent,
+})
+provider := featurevisorof.NewProvider(featurevisorof.Options{
+    Featurevisor: fv,
+})
+```
+
+The caller owns an instance passed this way. Provider shutdown does not close it. Call `fv.Close()` when every consumer is finished with it. When the provider creates the instance from `FeaturevisorOptions`, the provider owns and closes it. If both fields are supplied, `Featurevisor` takes precedence over `FeaturevisorOptions`.
+
+See the [OpenFeature provider guide](https://featurevisor.com/docs/sdks/openfeature/) for resolution reasons, errors, metadata, tracking, lifecycle, and providers for other languages.
+
 <!-- FEATUREVISOR_DOCS_END -->
 
 ## Development of this package
@@ -859,8 +922,10 @@ go test ./...
 
 ### Releasing
 
-- Manually create a new release on [GitHub](https://github.com/featurevisor/featurevisor-go/releases)
-- Tag it with a prefix of `v`, like `v1.0.0`
+- Tag the core SDK as `v2.x.y`.
+- Tag the provider module separately as `openfeature/v2.x.y`.
+- Run `make verify-packages` before creating either release.
+- Create the matching releases on [GitHub](https://github.com/featurevisor/featurevisor-go/releases).
 
 ## License
 

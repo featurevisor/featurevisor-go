@@ -2,7 +2,7 @@ package featurevisor
 
 import "fmt"
 
-// MurmurHashV3 implements the MurmurHash v3 algorithm
+// murmurHashV3 implements the MurmurHash v3 algorithm
 // Ported from the TypeScript implementation in the Featurevisor SDK
 //
 // Copyright (c) 2020 Gary Court, Derek Perez
@@ -13,8 +13,8 @@ import "fmt"
 //
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-// MurmurHashV3 calculates the MurmurHash v3 hash of the given key with the specified seed
-func MurmurHashV3(key interface{}, seed uint32) uint32 {
+// murmurHashV3 calculates the MurmurHash v3 hash of the given key with the specified seed
+func murmurHashV3(key interface{}, seed uint32) uint32 {
 	var data []byte
 
 	// Convert key to byte slice

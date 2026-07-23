@@ -9,8 +9,9 @@ import (
 type OverrideOptions struct {
 	sticky *StickyFeatures
 
-	DefaultVariationValue *VariationValue
-	DefaultVariableValue  VariableValue
+	DefaultVariationValue   *VariationValue
+	DefaultVariableValue    VariableValue
+	DefaultVariableValueSet bool
 }
 
 // SpawnOptions configures a child SDK instance.
@@ -39,19 +40,19 @@ type moduleDiagnosticSubscription struct {
 type Featurevisor struct {
 	// from options
 	context      Context
-	logger       *featurevisorLogger
+	diagnostics  *diagnosticReporter
 	logLevel     LogLevel
 	onDiagnostic FeaturevisorDiagnosticHandler
 	sticky       *StickyFeatures
 
 	// internally created
-	datafile                      DatafileContent
-	datafileReader                *datafileReader
-	modulesManager                *modulesManager
-	moduleDiagnosticSubscriptions []moduleDiagnosticSubscription
-	nextModuleDiagnosticID        int
-	emitter                       *emitter
-	closed                        bool
+	datafile                       DatafileContent
+	instanceEvaluationDataProvider *instanceEvaluationDataProvider
+	modulesManager                 *modulesManager
+	moduleDiagnosticSubscriptions  []moduleDiagnosticSubscription
+	nextModuleDiagnosticID         int
+	emitter                        *emitter
+	closed                         bool
 }
 
 // CreateFeaturevisor creates a new Featurevisor instance.
@@ -67,12 +68,50 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 		level = *options.LogLevel
 	}
 	var instance *Featurevisor
-	handler := logHandler(func(logLevel LogLevel, message logMessage, details logDetails) {
+	handler := diagnosticOutputHandler(func(logLevel LogLevel, message logMessage, details logDetails) {
 		if instance == nil {
 			return
 		}
+		normalizedDetails := make(logDetails, len(details))
+		for key, value := range details {
+			normalizedDetails[key] = value
+		}
+		details = normalizedDetails
+
+		var originalError interface{}
+		if value, ok := details["originalError"]; ok {
+			originalError = value
+			delete(details, "originalError")
+		} else if value, ok := details["error"]; ok {
+			originalError = value
+			delete(details, "error")
+		}
+		if nested, ok := details["details"].(map[string]interface{}); ok {
+			delete(details, "details")
+			for key, value := range nested {
+				details[key] = value
+			}
+		} else if nested, ok := details["details"].(logDetails); ok {
+			delete(details, "details")
+			for key, value := range nested {
+				details[key] = value
+			}
+		}
+
 		code := string(message)
-		if reason, ok := details["reason"].(EvaluationReason); ok {
+		if explicitCode, ok := details["code"].(string); ok {
+			code = explicitCode
+			delete(details, "code")
+		}
+		if evaluation, ok := details["evaluation"].(Evaluation); ok {
+			code = string(evaluation.Reason)
+			details = logDetails{
+				"featureKey":  evaluation.FeatureKey,
+				"variableKey": evaluation.VariableKey,
+				"reason":      evaluation.Reason,
+				"evaluation":  evaluation,
+			}
+		} else if reason, ok := details["reason"].(EvaluationReason); ok {
 			code = string(reason)
 		} else if reason, ok := details["reason"].(string); ok {
 			code = reason
@@ -89,12 +128,18 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 			code = "no_variations"
 		} else if message == "invalid bucketBy" {
 			code = "invalid_bucket_by"
+		} else if message == "Error in condition matching" {
+			code = "condition_match_error"
+		} else if message == "Error parsing conditions" {
+			code = "conditions_parse_error"
+		} else if message == "panic during evaluation" || message == "panic in evaluate" {
+			code = "evaluation_error"
 		}
 		instance.reportDiagnostic(FeaturevisorDiagnostic{
-			Level: logLevel, Code: code, Message: string(message), Details: details,
+			Level: logLevel, Code: code, Message: string(message), OriginalError: originalError, Details: details,
 		}, nil)
 	})
-	logger := newLogger(loggerOptions{Level: &level, Handler: &handler})
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{Level: &level, Handler: &handler})
 
 	// Create emitter
 	emitter := newEmitter()
@@ -106,20 +151,20 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 		Features:      make(map[FeatureKey]Feature),
 	}
 
-	datafileReader := newDatafileReader(datafileReaderOptions{
+	instanceEvaluationDataProvider := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           emptyDatafile,
-		featurevisorLogger: logger,
+		diagnosticReporter: diagnostics,
 	})
 
 	instance = &Featurevisor{
-		context:        context,
-		logger:         logger,
-		logLevel:       logger.GetLevel(),
-		onDiagnostic:   options.OnDiagnostic,
-		emitter:        emitter,
-		datafile:       emptyDatafile,
-		datafileReader: datafileReader,
-		sticky:         options.Sticky,
+		context:                        context,
+		diagnostics:                    diagnostics,
+		logLevel:                       diagnostics.GetLevel(),
+		onDiagnostic:                   options.OnDiagnostic,
+		emitter:                        emitter,
+		datafile:                       emptyDatafile,
+		instanceEvaluationDataProvider: instanceEvaluationDataProvider,
+		sticky:                         options.Sticky,
 	}
 
 	instance.modulesManager = newModulesManager(modulesManagerOptions{
@@ -145,7 +190,7 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 // SetLogLevel sets the log level
 func (i *Featurevisor) SetLogLevel(level LogLevel) {
 	i.logLevel = level
-	i.logger.SetLevel(level)
+	i.diagnostics.SetLevel(level)
 }
 
 // SetDatafile sets the datafile
@@ -175,15 +220,15 @@ func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
 		storedDatafile = mergeStoredDatafile(i.datafile, datafileContent)
 	}
 
-	newDatafileReader := newDatafileReader(datafileReaderOptions{
+	newInstanceEvaluationDataProvider := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile:           storedDatafile,
-		featurevisorLogger: i.logger,
+		diagnosticReporter: i.diagnostics,
 	})
 
-	details := getParamsForDatafileSetEvent(i.datafileReader, newDatafileReader, replaceValue)
+	details := getParamsForDatafileSetEvent(i.instanceEvaluationDataProvider, newInstanceEvaluationDataProvider, replaceValue)
 
 	i.datafile = storedDatafile
-	i.datafileReader = newDatafileReader
+	i.instanceEvaluationDataProvider = newInstanceEvaluationDataProvider
 
 	i.reportDiagnostic(FeaturevisorDiagnostic{
 		Level:   LogLevelInfo,
@@ -237,32 +282,32 @@ func (i *Featurevisor) SetSticky(sticky StickyFeatures, replace ...bool) {
 
 // GetRevision returns the revision
 func (i *Featurevisor) GetRevision() string {
-	return i.datafileReader.GetRevision()
+	return i.instanceEvaluationDataProvider.GetRevision()
 }
 
 func (i *Featurevisor) GetSchemaVersion() string {
-	return i.datafileReader.GetSchemaVersion()
+	return i.instanceEvaluationDataProvider.GetSchemaVersion()
 }
 
 func (i *Featurevisor) GetSegment(segmentKey string) *Segment {
-	return i.datafileReader.GetSegment(SegmentKey(segmentKey))
+	return i.instanceEvaluationDataProvider.GetSegment(SegmentKey(segmentKey))
 }
 
 func (i *Featurevisor) GetFeatureKeys() []string {
-	return i.datafileReader.GetFeatureKeys()
+	return i.instanceEvaluationDataProvider.GetFeatureKeys()
 }
 
 func (i *Featurevisor) GetVariableKeys(featureKey string) []string {
-	return i.datafileReader.GetVariableKeys(FeatureKey(featureKey))
+	return i.instanceEvaluationDataProvider.GetVariableKeys(FeatureKey(featureKey))
 }
 
 func (i *Featurevisor) HasVariations(featureKey string) bool {
-	return i.datafileReader.HasVariations(FeatureKey(featureKey))
+	return i.instanceEvaluationDataProvider.HasVariations(FeatureKey(featureKey))
 }
 
 // GetFeature returns a feature by key
 func (i *Featurevisor) GetFeature(featureKey string) *Feature {
-	return i.datafileReader.GetFeature(FeatureKey(featureKey))
+	return i.instanceEvaluationDataProvider.GetFeature(FeatureKey(featureKey))
 }
 
 // AddModule adds a module.
@@ -358,7 +403,7 @@ func (i *Featurevisor) reportDiagnostic(
 			if diagnostic.OriginalError != nil {
 				details["originalError"] = diagnostic.OriginalError
 			}
-			defaultLogHandler(diagnostic.Level, logMessage(diagnostic.Message), details)
+			defaultDiagnosticHandler(diagnostic.Level, logMessage(diagnostic.Message), details)
 		}
 	}
 
@@ -496,7 +541,7 @@ func (i *Featurevisor) Spawn(args ...interface{}) *FeaturevisorChild {
 		}
 	}
 
-	return newFeaturevisorChild(ChildOptions{
+	return newFeaturevisorChild(childOptions{
 		Parent:  i,
 		Context: i.GetContext(contextValue),
 		Sticky:  optionsValue.Sticky,
@@ -504,7 +549,7 @@ func (i *Featurevisor) Spawn(args ...interface{}) *FeaturevisorChild {
 }
 
 // getEvaluationDependencies gets evaluation dependencies
-func (i *Featurevisor) getEvaluationDependencies(context Context, options OverrideOptions) EvaluateDependencies {
+func (i *Featurevisor) getEvaluationDependencies(context Context, options OverrideOptions) evaluateDependencies {
 	var sticky *StickyFeatures
 	if options.sticky != nil {
 		sticky = options.sticky
@@ -512,25 +557,41 @@ func (i *Featurevisor) getEvaluationDependencies(context Context, options Overri
 		sticky = i.sticky
 	}
 
-	return EvaluateDependencies{
-		Context:               i.GetContext(context),
-		featurevisorLogger:    i.logger,
-		modulesManager:        i.modulesManager,
-		datafileReader:        i.datafileReader,
-		sticky:                sticky,
-		DefaultVariationValue: options.DefaultVariationValue,
-		DefaultVariableValue:  options.DefaultVariableValue,
+	return evaluateDependencies{
+		Context:                        i.GetContext(context),
+		diagnosticReporter:             i.diagnostics,
+		modulesManager:                 i.modulesManager,
+		instanceEvaluationDataProvider: i.instanceEvaluationDataProvider,
+		sticky:                         sticky,
+		DefaultVariationValue:          options.DefaultVariationValue,
+		DefaultVariableValue:           options.DefaultVariableValue,
+		DefaultVariableValueSet:        options.DefaultVariableValueSet,
 	}
 }
 
-// EvaluateFlag evaluates a feature flag
-func (i *Featurevisor) EvaluateFlag(featureKey string, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithModules(EvaluateOptions{
-		EvaluateParams: EvaluateParams{
+func parseEvaluationArgs(args []interface{}) (Context, OverrideOptions) {
+	context := Context{}
+	options := OverrideOptions{}
+	for _, arg := range args {
+		switch value := arg.(type) {
+		case Context:
+			context = value
+		case OverrideOptions:
+			options = value
+		}
+	}
+	return context, options
+}
+
+// EvaluateFlag evaluates a feature flag.
+func (i *Featurevisor) EvaluateFlag(featureKey string, args ...interface{}) Evaluation {
+	context, options := parseEvaluationArgs(args)
+	return evaluateWithModules(EvaluateOptions{
+		evaluateParams: evaluateParams{
 			Type:       EvaluationTypeFlag,
 			FeatureKey: FeatureKey(featureKey),
 		},
-		EvaluateDependencies: i.getEvaluationDependencies(context, options),
+		evaluateDependencies: i.getEvaluationDependencies(context, options),
 	})
 }
 
@@ -538,7 +599,7 @@ func (i *Featurevisor) EvaluateFlag(featureKey string, context Context, options 
 func (i *Featurevisor) IsEnabled(featureKey string, args ...interface{}) bool {
 	defer func() {
 		if r := recover(); r != nil {
-			i.logger.Error("isEnabled", logDetails{
+			i.diagnostics.Error("isEnabled", logDetails{
 				"featureKey": featureKey,
 				"error":      r,
 			})
@@ -569,13 +630,14 @@ func (i *Featurevisor) IsEnabled(featureKey string, args ...interface{}) bool {
 }
 
 // EvaluateVariation evaluates a feature variation
-func (i *Featurevisor) EvaluateVariation(featureKey string, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithModules(EvaluateOptions{
-		EvaluateParams: EvaluateParams{
+func (i *Featurevisor) EvaluateVariation(featureKey string, args ...interface{}) Evaluation {
+	context, options := parseEvaluationArgs(args)
+	return evaluateWithModules(EvaluateOptions{
+		evaluateParams: evaluateParams{
 			Type:       EvaluationTypeVariation,
 			FeatureKey: FeatureKey(featureKey),
 		},
-		EvaluateDependencies: i.getEvaluationDependencies(context, options),
+		evaluateDependencies: i.getEvaluationDependencies(context, options),
 	})
 }
 
@@ -583,7 +645,7 @@ func (i *Featurevisor) EvaluateVariation(featureKey string, context Context, opt
 func (i *Featurevisor) GetVariation(featureKey string, args ...interface{}) *string {
 	defer func() {
 		if r := recover(); r != nil {
-			i.logger.Error("getVariation", logDetails{
+			i.diagnostics.Error("getVariation", logDetails{
 				"featureKey": featureKey,
 				"error":      r,
 			})
@@ -622,14 +684,15 @@ func (i *Featurevisor) GetVariation(featureKey string, args ...interface{}) *str
 }
 
 // EvaluateVariable evaluates a feature variable
-func (i *Featurevisor) EvaluateVariable(featureKey string, variableKey VariableKey, context Context, options OverrideOptions) Evaluation {
-	return EvaluateWithModules(EvaluateOptions{
-		EvaluateParams: EvaluateParams{
+func (i *Featurevisor) EvaluateVariable(featureKey string, variableKey VariableKey, args ...interface{}) Evaluation {
+	context, options := parseEvaluationArgs(args)
+	return evaluateWithModules(EvaluateOptions{
+		evaluateParams: evaluateParams{
 			Type:        EvaluationTypeVariable,
 			FeatureKey:  FeatureKey(featureKey),
 			VariableKey: &variableKey,
 		},
-		EvaluateDependencies: i.getEvaluationDependencies(context, options),
+		evaluateDependencies: i.getEvaluationDependencies(context, options),
 	})
 }
 
@@ -637,7 +700,7 @@ func (i *Featurevisor) EvaluateVariable(featureKey string, variableKey VariableK
 func (i *Featurevisor) GetVariable(featureKey string, variableKey string, args ...interface{}) VariableValue {
 	defer func() {
 		if r := recover(); r != nil {
-			i.logger.Error("getVariable", logDetails{
+			i.diagnostics.Error("getVariable", logDetails{
 				"featureKey":  featureKey,
 				"variableKey": variableKey,
 				"error":       r,
@@ -670,7 +733,7 @@ func (i *Featurevisor) GetVariable(featureKey string, variableKey string, args .
 					return parsedJSON
 				} else {
 					// Log error if JSON parsing fails
-					i.logger.Error("could not parse JSON variable", logDetails{
+					i.diagnostics.Error("could not parse JSON variable", logDetails{
 						"featureKey":  featureKey,
 						"variableKey": variableKey,
 						"error":       err,
@@ -681,7 +744,7 @@ func (i *Featurevisor) GetVariable(featureKey string, variableKey string, args .
 
 		// Apply type conversion for default values
 		if evaluation.VariableSchema != nil && evaluation.Reason == EvaluationReasonVariableDefault {
-			return GetValueByType(evaluation.VariableValue, string(evaluation.VariableSchema.Type))
+			return getValueByType(evaluation.VariableValue, string(evaluation.VariableSchema.Type))
 		}
 
 		return evaluation.VariableValue
@@ -697,7 +760,7 @@ func (i *Featurevisor) GetVariableBoolean(featureKey string, variableKey string,
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "boolean")
+	typedValue := getValueByType(value, "boolean")
 	if boolValue, ok := typedValue.(bool); ok {
 		return &boolValue
 	}
@@ -712,7 +775,7 @@ func (i *Featurevisor) GetVariableString(featureKey string, variableKey string, 
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "string")
+	typedValue := getValueByType(value, "string")
 	if stringValue, ok := typedValue.(string); ok {
 		return &stringValue
 	}
@@ -727,7 +790,7 @@ func (i *Featurevisor) GetVariableInteger(featureKey string, variableKey string,
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "integer")
+	typedValue := getValueByType(value, "integer")
 	if intValue, ok := typedValue.(int); ok {
 		return &intValue
 	}
@@ -742,7 +805,7 @@ func (i *Featurevisor) GetVariableDouble(featureKey string, variableKey string, 
 		return nil
 	}
 
-	typedValue := GetValueByType(value, "double")
+	typedValue := getValueByType(value, "double")
 	if floatValue, ok := typedValue.(float64); ok {
 		return &floatValue
 	}
@@ -757,7 +820,7 @@ func (i *Featurevisor) GetVariableArray(featureKey string, variableKey string, a
 		return nil
 	}
 
-	return ToTypedArray[string](GetValueByType(value, "array"))
+	return toTypedArray[string](getValueByType(value, "array"))
 }
 
 // GetVariableObject gets an object variable
@@ -767,7 +830,7 @@ func (i *Featurevisor) GetVariableObject(featureKey string, variableKey string, 
 		return nil
 	}
 
-	typedValue := ToTypedObject[map[string]interface{}](GetValueByType(value, "object"))
+	typedValue := toTypedObject[map[string]interface{}](getValueByType(value, "object"))
 	if typedValue == nil {
 		return nil
 	}
@@ -799,7 +862,7 @@ func (i *Featurevisor) GetVariableArrayInto(featureKey string, variableKey strin
 		return decodeInto(nil, out)
 	}
 
-	arrayValue := GetValueByType(value, "array")
+	arrayValue := getValueByType(value, "array")
 	if arrayValue == nil {
 		return fmt.Errorf("variable %q is not an array", variableKey)
 	}
@@ -820,7 +883,7 @@ func (i *Featurevisor) GetVariableObjectInto(featureKey string, variableKey stri
 		return decodeInto(nil, out)
 	}
 
-	objectValue := GetValueByType(value, "object")
+	objectValue := getValueByType(value, "object")
 	if objectValue == nil {
 		return fmt.Errorf("variable %q is not an object", variableKey)
 	}
@@ -835,7 +898,7 @@ func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, 
 	keys := featureKeys
 	if len(keys) == 0 {
 		// Get all feature keys
-		allKeys := i.datafileReader.GetFeatureKeys()
+		allKeys := i.instanceEvaluationDataProvider.GetFeatureKeys()
 		keys = make([]string, len(allKeys))
 		for j, key := range allKeys {
 			keys[j] = string(key)
@@ -849,7 +912,7 @@ func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, 
 		}
 
 		// variation
-		if i.datafileReader.HasVariations(FeatureKey(featureKey)) {
+		if i.instanceEvaluationDataProvider.HasVariations(FeatureKey(featureKey)) {
 			variation := i.GetVariation(featureKey, context, options)
 			if variation != nil {
 				evaluatedFeature.Variation = variation
@@ -857,7 +920,7 @@ func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, 
 		}
 
 		// variables
-		variableKeys := i.datafileReader.GetVariableKeys(FeatureKey(featureKey))
+		variableKeys := i.instanceEvaluationDataProvider.GetVariableKeys(FeatureKey(featureKey))
 		if len(variableKeys) > 0 {
 			evaluatedFeature.Variables = make(map[VariableKey]VariableValue)
 			for _, variableKey := range variableKeys {
