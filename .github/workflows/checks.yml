@@ -71,7 +71,7 @@ jobs:
           go-version: "1.25.x"
           cache-dependency-path: featurevisor-go/go.sum
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: "featurevisor/.nvmrc"
           cache: npm
