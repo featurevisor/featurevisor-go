@@ -5,40 +5,41 @@ import (
 	"sort"
 )
 
-// EvaluateParams contains parameters for evaluation
-type EvaluateParams struct {
+// evaluateParams contains parameters for evaluation
+type evaluateParams struct {
 	Type        EvaluationType
 	FeatureKey  FeatureKey
 	VariableKey *VariableKey
 }
 
-// EvaluateDependencies contains dependencies for evaluation
-type EvaluateDependencies struct {
-	Context            Context
-	featurevisorLogger *featurevisorLogger
-	modulesManager     *modulesManager
-	datafileReader     *datafileReader
+// evaluateDependencies contains dependencies for evaluation
+type evaluateDependencies struct {
+	Context                        Context
+	diagnosticReporter             *diagnosticReporter
+	modulesManager                 *modulesManager
+	instanceEvaluationDataProvider *instanceEvaluationDataProvider
 
 	// Instance-internal sticky state. Consumers configure it on an instance.
 	sticky *StickyFeatures
 
-	DefaultVariationValue *VariationValue
-	DefaultVariableValue  VariableValue
+	DefaultVariationValue   *VariationValue
+	DefaultVariableValue    VariableValue
+	DefaultVariableValueSet bool
 }
 
 // EvaluateOptions contains all options for evaluation
 type EvaluateOptions struct {
-	EvaluateParams
-	EvaluateDependencies
+	evaluateParams
+	evaluateDependencies
 }
 
-// EvaluateWithModules evaluates a feature with modules.
-func EvaluateWithModules(opts EvaluateOptions) Evaluation {
+// evaluateWithModules evaluates a feature with modules.
+func evaluateWithModules(opts EvaluateOptions) Evaluation {
 	var evaluation Evaluation
 
 	defer func() {
 		if r := recover(); r != nil {
-			opts.featurevisorLogger.Error("panic during evaluation", logDetails{
+			opts.diagnosticReporter.Error("panic during evaluation", logDetails{
 				"error": r,
 			})
 
@@ -65,7 +66,7 @@ func EvaluateWithModules(opts EvaluateOptions) Evaluation {
 	}
 
 	// evaluate
-	evaluation = Evaluate(options)
+	evaluation = evaluate(options)
 
 	// default: variation
 	if opts.DefaultVariationValue != nil &&
@@ -75,7 +76,7 @@ func EvaluateWithModules(opts EvaluateOptions) Evaluation {
 	}
 
 	// default: variable
-	if opts.DefaultVariableValue != nil &&
+	if opts.DefaultVariableValueSet &&
 		evaluation.Type == EvaluationTypeVariable &&
 		evaluation.VariableValue == nil {
 		evaluation.VariableValue = opts.DefaultVariableValue
@@ -91,14 +92,14 @@ func EvaluateWithModules(opts EvaluateOptions) Evaluation {
 	return evaluation
 }
 
-// Evaluate evaluates a feature
-func Evaluate(options EvaluateOptions) Evaluation {
+// evaluate evaluates a feature
+func evaluate(options EvaluateOptions) Evaluation {
 	var evaluation Evaluation
 
 	defer func() {
 		if r := recover(); r != nil {
 			// Log the panic and return an error evaluation
-			options.featurevisorLogger.Error("panic in evaluate", logDetails{
+			options.diagnosticReporter.Error("panic in evaluate", logDetails{
 				"panic": r,
 			})
 
@@ -114,7 +115,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	}()
 
 	// feature not found
-	feature := options.datafileReader.GetFeature(options.FeatureKey)
+	feature := options.instanceEvaluationDataProvider.GetFeature(options.FeatureKey)
 	if feature == nil {
 		evaluation = Evaluation{
 			Type:       options.Type,
@@ -122,16 +123,14 @@ func Evaluate(options EvaluateOptions) Evaluation {
 			Reason:     EvaluationReasonFeatureNotFound,
 		}
 
-		options.featurevisorLogger.Warn("feature not found", logDetails{
-			"featureKey": options.FeatureKey,
-		})
+		options.diagnosticReporter.Warn("feature not found", logDetails{"evaluation": evaluation})
 
 		return evaluation
 	}
 
 	// feature: deprecated
 	if options.Type == EvaluationTypeFlag && feature.Deprecated != nil && *feature.Deprecated {
-		options.featurevisorLogger.Warn("feature is deprecated", logDetails{
+		options.diagnosticReporter.Warn("feature is deprecated", logDetails{
 			"featureKey": options.FeatureKey,
 		})
 	}
@@ -151,7 +150,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 					Enabled:    &[]bool{true}[0],
 				}
 
-				options.featurevisorLogger.Debug("using sticky enabled", logDetails{
+				options.diagnosticReporter.Debug("using sticky enabled", logDetails{
 					"evaluation": evaluation,
 				})
 
@@ -169,7 +168,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 					VariationValue: &variationValue,
 				}
 
-				options.featurevisorLogger.Debug("using sticky variation", logDetails{
+				options.diagnosticReporter.Debug("using sticky variation", logDetails{
 					"evaluation": evaluation,
 				})
 
@@ -188,7 +187,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 						VariableValue: variableValue,
 					}
 
-					options.featurevisorLogger.Debug("using sticky variable", logDetails{
+					options.diagnosticReporter.Debug("using sticky variable", logDetails{
 						"evaluation": evaluation,
 					})
 
@@ -217,7 +216,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				VariableKey: options.VariableKey,
 			}
 
-			options.featurevisorLogger.Warn("variable schema not found", logDetails{
+			options.diagnosticReporter.Warn("variable schema not found", logDetails{
 				"evaluation": evaluation,
 			})
 
@@ -225,7 +224,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 		}
 
 		if variableSchema.Deprecated != nil && *variableSchema.Deprecated {
-			options.featurevisorLogger.Warn("variable is deprecated", logDetails{
+			options.diagnosticReporter.Warn("variable is deprecated", logDetails{
 				"featureKey":  options.FeatureKey,
 				"variableKey": *options.VariableKey,
 			})
@@ -240,7 +239,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 			Reason:     EvaluationReasonNoVariations,
 		}
 
-		options.featurevisorLogger.Warn("no variations", logDetails{
+		options.diagnosticReporter.Warn("no variations", logDetails{
 			"evaluation": evaluation,
 		})
 
@@ -253,12 +252,12 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	var flag Evaluation
 	if options.Type != EvaluationTypeFlag {
 		// needed by variation and variable evaluations
-		flag = Evaluate(EvaluateOptions{
-			EvaluateParams: EvaluateParams{
+		flag = evaluate(EvaluateOptions{
+			evaluateParams: evaluateParams{
 				Type:       EvaluationTypeFlag,
 				FeatureKey: options.FeatureKey,
 			},
-			EvaluateDependencies: options.EvaluateDependencies,
+			evaluateDependencies: options.evaluateDependencies,
 		})
 
 		if flag.Enabled != nil && !*flag.Enabled {
@@ -310,7 +309,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				}
 			}
 
-			options.featurevisorLogger.Debug("feature is disabled", logDetails{
+			options.diagnosticReporter.Debug("feature is disabled", logDetails{
 				"evaluation": evaluation,
 			})
 
@@ -321,7 +320,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	/**
 	 * Forced
 	 */
-	forceResult := options.datafileReader.GetMatchedForce(feature, options.Context)
+	forceResult := options.instanceEvaluationDataProvider.GetMatchedForce(feature, options.Context)
 
 	if forceResult.Force != nil {
 		force := forceResult.Force
@@ -338,7 +337,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				Enabled:    force.Enabled,
 			}
 
-			options.featurevisorLogger.Debug("forced enabled found", logDetails{
+			options.diagnosticReporter.Debug("forced enabled found", logDetails{
 				"evaluation": evaluation,
 			})
 
@@ -359,7 +358,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 						VariationValue: &variation.Value,
 					}
 
-					options.featurevisorLogger.Debug("forced variation found", logDetails{
+					options.diagnosticReporter.Debug("forced variation found", logDetails{
 						"evaluation": evaluation,
 					})
 
@@ -382,7 +381,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 					VariableValue:  variableValue,
 				}
 
-				options.featurevisorLogger.Debug("forced variable", logDetails{
+				options.diagnosticReporter.Debug("forced variable", logDetails{
 					"evaluation": evaluation,
 				})
 
@@ -408,12 +407,12 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				requiredVariation = &requiredWithVar.Variation
 			}
 
-			requiredEvaluation := Evaluate(EvaluateOptions{
-				EvaluateParams: EvaluateParams{
+			requiredEvaluation := evaluate(EvaluateOptions{
+				evaluateParams: evaluateParams{
 					Type:       EvaluationTypeFlag,
 					FeatureKey: requiredKey,
 				},
-				EvaluateDependencies: options.EvaluateDependencies,
+				evaluateDependencies: options.evaluateDependencies,
 			})
 			requiredIsEnabled := requiredEvaluation.Enabled != nil && *requiredEvaluation.Enabled
 
@@ -423,12 +422,12 @@ func Evaluate(options EvaluateOptions) Evaluation {
 			}
 
 			if requiredVariation != nil {
-				requiredVariationEvaluation := Evaluate(EvaluateOptions{
-					EvaluateParams: EvaluateParams{
+				requiredVariationEvaluation := evaluate(EvaluateOptions{
+					evaluateParams: evaluateParams{
 						Type:       EvaluationTypeVariation,
 						FeatureKey: requiredKey,
 					},
-					EvaluateDependencies: options.EvaluateDependencies,
+					evaluateDependencies: options.evaluateDependencies,
 				})
 
 				var requiredVariationValue *VariationValue
@@ -455,7 +454,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				Enabled:    &[]bool{requiredFeaturesAreEnabled}[0],
 			}
 
-			options.featurevisorLogger.Debug("required features not enabled", logDetails{
+			options.diagnosticReporter.Debug("required features not enabled", logDetails{
 				"evaluation": evaluation,
 			})
 
@@ -467,11 +466,11 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	 * Bucketing
 	 */
 	// bucketKey
-	bucketKey := GetBucketKey(GetBucketKeyOptions{
+	bucketKey := getBucketKey(getBucketKeyOptions{
 		FeatureKey:         options.FeatureKey,
 		BucketBy:           feature.BucketBy,
 		Context:            options.Context,
-		featurevisorLogger: options.featurevisorLogger,
+		diagnosticReporter: options.diagnosticReporter,
 	})
 
 	for _, module := range options.modulesManager.GetAll() {
@@ -486,7 +485,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	}
 
 	// bucketValue
-	bucketValue := GetBucketedNumber(bucketKey)
+	bucketValue := getBucketedNumber(bucketKey)
 
 	for _, module := range options.modulesManager.GetAll() {
 		if module.BucketValue != nil {
@@ -503,13 +502,13 @@ func Evaluate(options EvaluateOptions) Evaluation {
 	var matchedAllocation *Allocation
 
 	if options.Type != EvaluationTypeFlag {
-		matchedTraffic = options.datafileReader.GetMatchedTraffic(feature.Traffic, options.Context)
+		matchedTraffic = options.instanceEvaluationDataProvider.GetMatchedTraffic(feature.Traffic, options.Context)
 
 		if matchedTraffic != nil {
-			matchedAllocation = options.datafileReader.GetMatchedAllocation(matchedTraffic, bucketValue)
+			matchedAllocation = options.instanceEvaluationDataProvider.GetMatchedAllocation(matchedTraffic, bucketValue)
 		}
 	} else {
-		matchedTraffic = options.datafileReader.GetMatchedTraffic(feature.Traffic, options.Context)
+		matchedTraffic = options.instanceEvaluationDataProvider.GetMatchedTraffic(feature.Traffic, options.Context)
 	}
 
 	if matchedTraffic != nil {
@@ -526,7 +525,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				Enabled:     &[]bool{false}[0],
 			}
 
-			options.featurevisorLogger.Debug("matched rule with 0 percentage", logDetails{
+			options.diagnosticReporter.Debug("matched rule with 0 percentage", logDetails{
 				"evaluation": evaluation,
 			})
 
@@ -563,7 +562,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 						Enabled:     &enabled,
 					}
 
-					options.featurevisorLogger.Debug("matched", logDetails{
+					options.diagnosticReporter.Debug("matched", logDetails{
 						"evaluation": evaluation,
 					})
 
@@ -580,7 +579,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 					Enabled:     &[]bool{false}[0],
 				}
 
-				options.featurevisorLogger.Debug("not matched", logDetails{
+				options.diagnosticReporter.Debug("not matched", logDetails{
 					"evaluation": evaluation,
 				})
 
@@ -600,7 +599,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 					Enabled:     matchedTraffic.Enabled,
 				}
 
-				options.featurevisorLogger.Debug("override from rule", logDetails{
+				options.diagnosticReporter.Debug("override from rule", logDetails{
 					"evaluation": evaluation,
 				})
 
@@ -620,7 +619,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 					Enabled:     &[]bool{true}[0],
 				}
 
-				options.featurevisorLogger.Debug("matched traffic", logDetails{
+				options.diagnosticReporter.Debug("matched traffic", logDetails{
 					"evaluation": evaluation,
 				})
 
@@ -646,7 +645,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 							VariationValue: &variation.Value,
 						}
 
-						options.featurevisorLogger.Debug("override from rule", logDetails{
+						options.diagnosticReporter.Debug("override from rule", logDetails{
 							"evaluation": evaluation,
 						})
 
@@ -692,7 +691,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 						startRange := currentWeight * 100000 / totalWeight
 						endRange := (currentWeight + weightInt) * 100000 / totalWeight
 
-						options.featurevisorLogger.Debug("checking variation weight range", logDetails{
+						options.diagnosticReporter.Debug("checking variation weight range", logDetails{
 							"variationValue": vw.value,
 							"weight":         weightInt,
 							"startRange":     startRange,
@@ -717,7 +716,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 										VariationValue: &variation.Value,
 									}
 
-									options.featurevisorLogger.Debug("allocated variation with custom weights", logDetails{
+									options.diagnosticReporter.Debug("allocated variation with custom weights", logDetails{
 										"evaluation": evaluation,
 									})
 
@@ -746,7 +745,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 							VariationValue: &variation.Value,
 						}
 
-						options.featurevisorLogger.Debug("allocated variation", logDetails{
+						options.diagnosticReporter.Debug("allocated variation", logDetails{
 							"evaluation": evaluation,
 						})
 
@@ -770,7 +769,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				BucketValue: &bucketValue,
 			}
 
-			options.featurevisorLogger.Debug("variable schema not found", logDetails{
+			options.diagnosticReporter.Debug("variable schema not found", logDetails{
 				"evaluation": evaluation,
 			})
 
@@ -785,11 +784,11 @@ func Evaluate(options EvaluateOptions) Evaluation {
 						matched := false
 
 						if override.Conditions != nil {
-							parsedConditions := options.datafileReader.parseConditionsIfStringified(override.Conditions)
-							matched = options.datafileReader.AllConditionsAreMatched(parsedConditions, options.Context)
+							parsedConditions := options.instanceEvaluationDataProvider.parseConditionsIfStringified(override.Conditions)
+							matched = options.instanceEvaluationDataProvider.AllConditionsAreMatched(parsedConditions, options.Context)
 						} else if override.Segments != nil {
-							parsedSegments := options.datafileReader.parseSegmentsIfStringified(override.Segments)
-							matched = options.datafileReader.AllSegmentsAreMatched(parsedSegments, options.Context)
+							parsedSegments := options.instanceEvaluationDataProvider.parseSegmentsIfStringified(override.Segments)
+							matched = options.instanceEvaluationDataProvider.AllSegmentsAreMatched(parsedSegments, options.Context)
 						}
 
 						if matched {
@@ -808,7 +807,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 								VariableOverrideIndex: &overrideIndex,
 							}
 
-							options.featurevisorLogger.Debug("variable override from rule", logDetails{
+							options.diagnosticReporter.Debug("variable override from rule", logDetails{
 								"evaluation": evaluation,
 							})
 
@@ -833,7 +832,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 						VariableValue:  variableValue,
 					}
 
-					options.featurevisorLogger.Debug("override from rule", logDetails{
+					options.diagnosticReporter.Debug("override from rule", logDetails{
 						"evaluation": evaluation,
 					})
 
@@ -862,12 +861,12 @@ func Evaluate(options EvaluateOptions) Evaluation {
 								matched := false
 
 								if override.Conditions != nil {
-									parsedConditions := options.datafileReader.parseConditionsIfStringified(override.Conditions)
-									matched = options.datafileReader.AllConditionsAreMatched(parsedConditions, options.Context)
+									parsedConditions := options.instanceEvaluationDataProvider.parseConditionsIfStringified(override.Conditions)
+									matched = options.instanceEvaluationDataProvider.AllConditionsAreMatched(parsedConditions, options.Context)
 								} else if override.Segments != nil {
 									// Parse segments if they come from JSON unmarshaling
-									parsedSegments := options.datafileReader.parseSegmentsIfStringified(override.Segments)
-									matched = options.datafileReader.AllSegmentsAreMatched(parsedSegments, options.Context)
+									parsedSegments := options.instanceEvaluationDataProvider.parseSegmentsIfStringified(override.Segments)
+									matched = options.instanceEvaluationDataProvider.AllSegmentsAreMatched(parsedSegments, options.Context)
 								}
 
 								if matched {
@@ -891,7 +890,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 										VariableOverrideIndex: &overrideIndex,
 									}
 
-									options.featurevisorLogger.Debug("variable override from variation", logDetails{
+									options.diagnosticReporter.Debug("variable override from variation", logDetails{
 										"evaluation": evaluation,
 									})
 
@@ -921,7 +920,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 								VariableValue:  variableValue,
 							}
 
-							options.featurevisorLogger.Debug("allocated variable", logDetails{
+							options.diagnosticReporter.Debug("allocated variable", logDetails{
 								"evaluation": evaluation,
 							})
 
@@ -945,7 +944,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				VariableValue:  variableSchema.DefaultValue,
 			}
 
-			options.featurevisorLogger.Debug("using default value", logDetails{
+			options.diagnosticReporter.Debug("using default value", logDetails{
 				"evaluation": evaluation,
 			})
 
@@ -962,7 +961,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 			BucketValue: &bucketValue,
 		}
 
-		options.featurevisorLogger.Debug("variable not found", logDetails{
+		options.diagnosticReporter.Debug("variable not found", logDetails{
 			"evaluation": evaluation,
 		})
 
@@ -981,7 +980,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 			BucketValue: &bucketValue,
 		}
 
-		options.featurevisorLogger.Debug("no matched variation", logDetails{
+		options.diagnosticReporter.Debug("no matched variation", logDetails{
 			"evaluation": evaluation,
 		})
 
@@ -1001,7 +1000,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 				VariableValue:  variableSchema.DefaultValue,
 			}
 
-			options.featurevisorLogger.Debug("using default value", logDetails{
+			options.diagnosticReporter.Debug("using default value", logDetails{
 				"evaluation": evaluation,
 			})
 
@@ -1017,7 +1016,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 			BucketValue: &bucketValue,
 		}
 
-		options.featurevisorLogger.Debug("variable not found", logDetails{
+		options.diagnosticReporter.Debug("variable not found", logDetails{
 			"evaluation": evaluation,
 		})
 
@@ -1033,7 +1032,7 @@ func Evaluate(options EvaluateOptions) Evaluation {
 		Enabled:     &[]bool{false}[0],
 	}
 
-	options.featurevisorLogger.Debug("nothing matched", logDetails{
+	options.diagnosticReporter.Debug("nothing matched", logDetails{
 		"evaluation": evaluation,
 	})
 

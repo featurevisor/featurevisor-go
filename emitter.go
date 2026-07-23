@@ -21,21 +21,21 @@ type EventDetails map[string]interface{}
 // EventCallback is a function type for handling events
 type EventCallback func(details EventDetails)
 
-// ListenerEntry represents a listener with a unique ID
-type ListenerEntry struct {
+// listenerEntry represents a listener with a unique ID
+type listenerEntry struct {
 	ID       int
 	Callback EventCallback
 }
 
-// Listeners represents a map of event names to their listener entries
-type Listeners map[EventName][]ListenerEntry
+// listenersByEvent represents a map of event names to their listener entries
+type listenersByEvent map[EventName][]listenerEntry
 
 // Unsubscribe is a function type for unsubscribing from events
 type Unsubscribe func()
 
 // emitter provides event handling functionality
 type emitter struct {
-	listeners Listeners
+	listeners listenersByEvent
 	nextID    int
 	mu        sync.RWMutex
 }
@@ -43,7 +43,7 @@ type emitter struct {
 // newEmitter creates a new emitter instance
 func newEmitter() *emitter {
 	return &emitter{
-		listeners: make(Listeners),
+		listeners: make(listenersByEvent),
 		nextID:    1,
 	}
 }
@@ -55,10 +55,10 @@ func (e *emitter) On(eventName EventName, callback EventCallback) Unsubscribe {
 	defer e.mu.Unlock()
 
 	if e.listeners[eventName] == nil {
-		e.listeners[eventName] = make([]ListenerEntry, 0)
+		e.listeners[eventName] = make([]listenerEntry, 0)
 	}
 
-	entry := ListenerEntry{
+	entry := listenerEntry{
 		ID:       e.nextID,
 		Callback: callback,
 	}
@@ -111,7 +111,7 @@ func (e *emitter) Trigger(eventName EventName, details EventDetails) {
 	}
 
 	// Create a copy of the listeners slice to avoid issues if callbacks modify the slice
-	listenersCopy := make([]ListenerEntry, len(listeners))
+	listenersCopy := make([]listenerEntry, len(listeners))
 	copy(listenersCopy, listeners)
 	e.mu.RUnlock()
 
@@ -136,7 +136,7 @@ func (e *emitter) TriggerDefault(eventName EventName) {
 func (e *emitter) ClearAll() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.listeners = make(Listeners)
+	e.listeners = make(listenersByEvent)
 }
 
 // GetListenerCount returns the number of listeners for a specific event

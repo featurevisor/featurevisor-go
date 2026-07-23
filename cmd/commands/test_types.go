@@ -1,6 +1,6 @@
 package commands
 
-import "github.com/featurevisor/featurevisor-go"
+import "github.com/featurevisor/featurevisor-go/v2"
 
 // AssertionMatrix represents a matrix of assertions
 type AssertionMatrix map[string][]featurevisor.AttributeValue

@@ -22,20 +22,20 @@ type logMessage string
 // logDetails represents additional details for logging
 type logDetails map[string]interface{}
 
-// logHandler is a function type for handling log messages
-type logHandler func(level LogLevel, message logMessage, details logDetails)
+// diagnosticOutputHandler is a function type for handling log messages
+type diagnosticOutputHandler func(level LogLevel, message logMessage, details logDetails)
 
-// loggerOptions contains options for creating a logger
-type loggerOptions struct {
+// diagnosticReporterOptions contains options for creating a diagnostics
+type diagnosticReporterOptions struct {
 	Level   *LogLevel
-	Handler *logHandler
+	Handler *diagnosticOutputHandler
 }
 
-// loggerPrefix is the prefix used for all log messages
-const loggerPrefix = "[Featurevisor]"
+// diagnosticPrefix is the prefix used for all log messages
+const diagnosticPrefix = "[Featurevisor]"
 
-// defaultLogHandler is the default logging handler
-func defaultLogHandler(level LogLevel, message logMessage, details logDetails) {
+// defaultDiagnosticHandler is the default logging handler
+func defaultDiagnosticHandler(level LogLevel, message logMessage, details logDetails) {
 	var method string
 
 	switch level {
@@ -52,7 +52,7 @@ func defaultLogHandler(level LogLevel, message logMessage, details logDetails) {
 	}
 
 	// Format the log message
-	logMessage := fmt.Sprintf("%s %s: %s", loggerPrefix, method, message)
+	logMessage := fmt.Sprintf("%s %s: %s", diagnosticPrefix, method, message)
 
 	// Add details if provided
 	if len(details) > 0 {
@@ -76,10 +76,11 @@ func defaultLogHandler(level LogLevel, message logMessage, details logDetails) {
 	}
 }
 
-// featurevisorLogger provides logging functionality
-type featurevisorLogger struct {
+// diagnosticReporter provides logging functionality
+type diagnosticReporter struct {
 	level  LogLevel
-	handle logHandler
+	handle diagnosticOutputHandler
+	filter bool
 }
 
 // allLevels contains all available log levels in order of severity
@@ -94,36 +95,39 @@ var allLevels = []LogLevel{
 // defaultLevel is the default logging level
 var defaultLevel = LogLevelInfo
 
-// newLogger creates a new logger instance
-func newLogger(options loggerOptions) *featurevisorLogger {
+// newDiagnosticReporter creates a new diagnostics instance
+func newDiagnosticReporter(options diagnosticReporterOptions) *diagnosticReporter {
 	level := defaultLevel
 	if options.Level != nil {
 		level = *options.Level
 	}
 
-	handler := defaultLogHandler
+	handler := defaultDiagnosticHandler
+	filter := true
 	if options.Handler != nil {
 		handler = *options.Handler
+		filter = false
 	}
 
-	return &featurevisorLogger{
+	return &diagnosticReporter{
 		level:  level,
 		handle: handler,
+		filter: filter,
 	}
 }
 
 // SetLevel sets the logging level
-func (l *featurevisorLogger) SetLevel(level LogLevel) {
+func (l *diagnosticReporter) SetLevel(level LogLevel) {
 	l.level = level
 }
 
 // GetLevel returns the current logging level
-func (l *featurevisorLogger) GetLevel() LogLevel {
+func (l *diagnosticReporter) GetLevel() LogLevel {
 	return l.level
 }
 
 // shouldHandle checks if a log level should be handled based on current level
-func (l *featurevisorLogger) shouldHandle(level LogLevel) bool {
+func (l *diagnosticReporter) shouldHandle(level LogLevel) bool {
 	currentIndex := -1
 	targetIndex := -1
 
@@ -146,9 +150,11 @@ func (l *featurevisorLogger) shouldHandle(level LogLevel) bool {
 	return targetIndex <= currentIndex
 }
 
-// Log logs a message at the specified level
-func (l *featurevisorLogger) Log(level LogLevel, message logMessage, details logDetails) {
-	if !l.shouldHandle(level) {
+// Log forwards an evaluator diagnostic to the instance pipeline.
+// Filtering happens only in Featurevisor.reportDiagnostic so module
+// subscriptions, the main handler, and error events are independent.
+func (l *diagnosticReporter) Log(level LogLevel, message logMessage, details logDetails) {
+	if l.filter && !l.shouldHandle(level) {
 		return
 	}
 
@@ -160,26 +166,26 @@ func (l *featurevisorLogger) Log(level LogLevel, message logMessage, details log
 }
 
 // Debug logs a debug message
-func (l *featurevisorLogger) Debug(message logMessage, details logDetails) {
+func (l *diagnosticReporter) Debug(message logMessage, details logDetails) {
 	l.Log(LogLevelDebug, message, details)
 }
 
 // Info logs an info message
-func (l *featurevisorLogger) Info(message logMessage, details logDetails) {
+func (l *diagnosticReporter) Info(message logMessage, details logDetails) {
 	l.Log(LogLevelInfo, message, details)
 }
 
 // Warn logs a warning message
-func (l *featurevisorLogger) Warn(message logMessage, details logDetails) {
+func (l *diagnosticReporter) Warn(message logMessage, details logDetails) {
 	l.Log(LogLevelWarn, message, details)
 }
 
 // Error logs an error message
-func (l *featurevisorLogger) Error(message logMessage, details logDetails) {
+func (l *diagnosticReporter) Error(message logMessage, details logDetails) {
 	l.Log(LogLevelError, message, details)
 }
 
 // Fatal logs a fatal message and exits
-func (l *featurevisorLogger) Fatal(message logMessage, details logDetails) {
+func (l *diagnosticReporter) Fatal(message logMessage, details logDetails) {
 	l.Log(LogLevelFatal, message, details)
 }

@@ -1,0 +1,38 @@
+name: Release validation
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "openfeature/v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: |
+            go.sum
+            openfeature/go.sum
+
+      - name: Validate tag and modules
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_NAME" == openfeature/* ]]; then
+            [[ "$GITHUB_REF_NAME" =~ ^openfeature/v2\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          else
+            [[ "$GITHUB_REF_NAME" =~ ^v2\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          fi
+          make verify-packages
+
+      - name: Test SDK and provider
+        run: make test

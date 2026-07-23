@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	featurevisor "github.com/featurevisor/featurevisor-go"
+	featurevisor "github.com/featurevisor/featurevisor-go/v2"
 )
 
 // BenchmarkOutput represents the result of a benchmark operation

@@ -7,18 +7,16 @@ import (
 	"strings"
 )
 
-// SemverRegex is the regular expression for parsing semantic versions
-// Ported from the TypeScript implementation
-var SemverRegex = regexp.MustCompile(`(?i)^[v^~<>=]*?(\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+))?(?:-([\da-z\-]+(?:\.[\da-z\-]+)*))?(?:\+[\da-z\-]+(?:\.[\da-z\-]+)*)?)?)?$`)
+var semverRegex = regexp.MustCompile(`(?i)^[v^~<>=]*?(\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+))?(?:-([\da-z\-]+(?:\.[\da-z\-]+)*))?(?:\+[\da-z\-]+(?:\.[\da-z\-]+)*)?)?)?$`)
 
-// ValidateAndParse validates and parses a semantic version string
+// validateAndParse validates and parses a semantic version string
 // Returns the parsed segments or an error if invalid
-func ValidateAndParse(version string) ([]string, error) {
+func validateAndParse(version string) ([]string, error) {
 	if version == "" {
 		return nil, fmt.Errorf("invalid argument expected string")
 	}
 
-	matches := SemverRegex.FindStringSubmatch(version)
+	matches := semverRegex.FindStringSubmatch(version)
 	if matches == nil {
 		return nil, fmt.Errorf("invalid argument not valid semver ('%s' received)", version)
 	}
@@ -27,34 +25,34 @@ func ValidateAndParse(version string) ([]string, error) {
 	return matches[1:], nil
 }
 
-// IsWildcard checks if a string is a wildcard character
-func IsWildcard(s string) bool {
+// isWildcard checks if a string is a wildcard character
+func isWildcard(s string) bool {
 	return s == "*" || s == "x" || s == "X"
 }
 
-// ForceType ensures both values are of the same type for comparison
-func ForceType(a, b interface{}) (interface{}, interface{}) {
+// forceType ensures both values are of the same type for comparison
+func forceType(a, b interface{}) (interface{}, interface{}) {
 	if fmt.Sprintf("%T", a) != fmt.Sprintf("%T", b) {
 		return fmt.Sprintf("%v", a), fmt.Sprintf("%v", b)
 	}
 	return a, b
 }
 
-// TryParse attempts to parse a string as an integer, returns the original string if it fails
-func TryParse(v string) interface{} {
+// tryParse attempts to parse a string as an integer, returns the original string if it fails
+func tryParse(v string) interface{} {
 	if n, err := strconv.Atoi(v); err == nil {
 		return n
 	}
 	return v
 }
 
-// CompareStrings compares two strings, handling wildcards and mixed types
-func CompareStrings(a, b string) int {
-	if IsWildcard(a) || IsWildcard(b) {
+// compareStrings compares two strings, handling wildcards and mixed types
+func compareStrings(a, b string) int {
+	if isWildcard(a) || isWildcard(b) {
 		return 0
 	}
 
-	ap, bp := ForceType(TryParse(a), TryParse(b))
+	ap, bp := forceType(tryParse(a), tryParse(b))
 
 	switch apVal := ap.(type) {
 	case int:
@@ -78,8 +76,8 @@ func CompareStrings(a, b string) int {
 	}
 }
 
-// CompareSegments compares two arrays of version segments
-func CompareSegments(a, b []string) int {
+// compareSegments compares two arrays of version segments
+func compareSegments(a, b []string) int {
 	maxLen := len(a)
 	if len(b) > maxLen {
 		maxLen = len(b)
@@ -96,7 +94,7 @@ func CompareSegments(a, b []string) int {
 			bVal = b[i]
 		}
 
-		result := CompareStrings(aVal, bVal)
+		result := compareStrings(aVal, bVal)
 		if result != 0 {
 			return result
 		}
@@ -105,20 +103,20 @@ func CompareSegments(a, b []string) int {
 	return 0
 }
 
-// CompareVersions compares two semantic version strings
+// compareVersions compares two semantic version strings
 // Returns:
 //
 //	-1 if v1 < v2
 //	 0 if v1 == v2
 //	 1 if v1 > v2
-func CompareVersions(v1, v2 string) (int, error) {
+func compareVersions(v1, v2 string) (int, error) {
 	// Validate input and split into segments
-	n1, err := ValidateAndParse(v1)
+	n1, err := validateAndParse(v1)
 	if err != nil {
 		return 0, fmt.Errorf("invalid first version: %w", err)
 	}
 
-	n2, err := ValidateAndParse(v2)
+	n2, err := validateAndParse(v2)
 	if err != nil {
 		return 0, fmt.Errorf("invalid second version: %w", err)
 	}
@@ -135,7 +133,7 @@ func CompareVersions(v1, v2 string) (int, error) {
 	}
 
 	// Compare main version segments
-	result := CompareSegments(n1, n2)
+	result := compareSegments(n1, n2)
 	if result != 0 {
 		return result, nil
 	}
@@ -144,7 +142,7 @@ func CompareVersions(v1, v2 string) (int, error) {
 	if p1 != "" && p2 != "" {
 		p1Parts := strings.Split(p1, ".")
 		p2Parts := strings.Split(p2, ".")
-		return CompareSegments(p1Parts, p2Parts), nil
+		return compareSegments(p1Parts, p2Parts), nil
 	} else if p1 != "" || p2 != "" {
 		if p1 != "" {
 			return -1, nil

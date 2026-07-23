@@ -10,13 +10,13 @@ func TestGetBucketedNumber(t *testing.T) {
 		keys := []string{"foo", "bar", "baz", "123adshlk348-93asdlk"}
 
 		for _, key := range keys {
-			n := GetBucketedNumber(key)
+			n := getBucketedNumber(key)
 
 			if n < 0 {
-				t.Errorf("GetBucketedNumber(%s) = %d; want >= 0", key, n)
+				t.Errorf("getBucketedNumber(%s) = %d; want >= 0", key, n)
 			}
 			if n > MAX_BUCKETED_NUMBER {
-				t.Errorf("GetBucketedNumber(%s) = %d; want <= %d", key, n, MAX_BUCKETED_NUMBER)
+				t.Errorf("getBucketedNumber(%s) = %d; want <= %d", key, n, MAX_BUCKETED_NUMBER)
 			}
 		}
 	})
@@ -32,17 +32,29 @@ func TestGetBucketedNumber(t *testing.T) {
 		}
 
 		for key, expected := range expectedResults {
-			n := GetBucketedNumber(key)
+			n := getBucketedNumber(key)
 
 			if n != expected {
-				t.Errorf("GetBucketedNumber(%s) = %d; want %d", key, n, expected)
+				t.Errorf("getBucketedNumber(%s) = %d; want %d", key, n, expected)
 			}
 		}
 	})
 }
 
 func TestGetBucketKey(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
+
+	t.Run("stringifies whole floating point values and negative zero like JavaScript", func(t *testing.T) {
+		bucketKey := getBucketKey(getBucketKeyOptions{
+			FeatureKey:         "feature",
+			BucketBy:           []string{"whole", "negativeZero", "small", "large"},
+			Context:            Context{"whole": 1.0, "negativeZero": -0.0, "small": 1e-6, "large": 1e21},
+			diagnosticReporter: diagnostics,
+		})
+		if bucketKey != "1.0.0.000001.1e+21.feature" {
+			t.Fatalf("getBucketKey() = %s; want JavaScript number formatting", bucketKey)
+		}
+	})
 
 	t.Run("plain: should return a bucket key for a plain bucketBy", func(t *testing.T) {
 		featureKey := FeatureKey("test-feature")
@@ -52,16 +64,16 @@ func TestGetBucketKey(t *testing.T) {
 			"browser": "chrome",
 		}
 
-		bucketKey := GetBucketKey(GetBucketKeyOptions{
+		bucketKey := getBucketKey(getBucketKeyOptions{
 			FeatureKey:         featureKey,
 			BucketBy:           bucketBy,
 			Context:            context,
-			featurevisorLogger: logger,
+			diagnosticReporter: diagnostics,
 		})
 
 		expected := "123.test-feature"
 		if bucketKey != expected {
-			t.Errorf("GetBucketKey() = %s; want %s", bucketKey, expected)
+			t.Errorf("getBucketKey() = %s; want %s", bucketKey, expected)
 		}
 	})
 
@@ -72,16 +84,16 @@ func TestGetBucketKey(t *testing.T) {
 			"browser": "chrome",
 		}
 
-		bucketKey := GetBucketKey(GetBucketKeyOptions{
+		bucketKey := getBucketKey(getBucketKeyOptions{
 			FeatureKey:         featureKey,
 			BucketBy:           bucketBy,
 			Context:            context,
-			featurevisorLogger: logger,
+			diagnosticReporter: diagnostics,
 		})
 
 		expected := "test-feature"
 		if bucketKey != expected {
-			t.Errorf("GetBucketKey() = %s; want %s", bucketKey, expected)
+			t.Errorf("getBucketKey() = %s; want %s", bucketKey, expected)
 		}
 	})
 
@@ -94,16 +106,16 @@ func TestGetBucketKey(t *testing.T) {
 			"browser":        "chrome",
 		}
 
-		bucketKey := GetBucketKey(GetBucketKeyOptions{
+		bucketKey := getBucketKey(getBucketKeyOptions{
 			FeatureKey:         featureKey,
 			BucketBy:           bucketBy,
 			Context:            context,
-			featurevisorLogger: logger,
+			diagnosticReporter: diagnostics,
 		})
 
 		expected := "123.234.test-feature"
 		if bucketKey != expected {
-			t.Errorf("GetBucketKey() = %s; want %s", bucketKey, expected)
+			t.Errorf("getBucketKey() = %s; want %s", bucketKey, expected)
 		}
 	})
 
@@ -115,16 +127,16 @@ func TestGetBucketKey(t *testing.T) {
 			"browser":        "chrome",
 		}
 
-		bucketKey := GetBucketKey(GetBucketKeyOptions{
+		bucketKey := getBucketKey(getBucketKeyOptions{
 			FeatureKey:         featureKey,
 			BucketBy:           bucketBy,
 			Context:            context,
-			featurevisorLogger: logger,
+			diagnosticReporter: diagnostics,
 		})
 
 		expected := "123.test-feature"
 		if bucketKey != expected {
-			t.Errorf("GetBucketKey() = %s; want %s", bucketKey, expected)
+			t.Errorf("getBucketKey() = %s; want %s", bucketKey, expected)
 		}
 	})
 
@@ -139,16 +151,16 @@ func TestGetBucketKey(t *testing.T) {
 			"browser": "chrome",
 		}
 
-		bucketKey := GetBucketKey(GetBucketKeyOptions{
+		bucketKey := getBucketKey(getBucketKeyOptions{
 			FeatureKey:         featureKey,
 			BucketBy:           bucketBy,
 			Context:            context,
-			featurevisorLogger: logger,
+			diagnosticReporter: diagnostics,
 		})
 
 		expected := "123.234.test-feature"
 		if bucketKey != expected {
-			t.Errorf("GetBucketKey() = %s; want %s", bucketKey, expected)
+			t.Errorf("getBucketKey() = %s; want %s", bucketKey, expected)
 		}
 	})
 
@@ -163,16 +175,16 @@ func TestGetBucketKey(t *testing.T) {
 			"browser":  "chrome",
 		}
 
-		bucketKey := GetBucketKey(GetBucketKeyOptions{
+		bucketKey := getBucketKey(getBucketKeyOptions{
 			FeatureKey:         featureKey,
 			BucketBy:           bucketBy,
 			Context:            context,
-			featurevisorLogger: logger,
+			diagnosticReporter: diagnostics,
 		})
 
 		expected := "234.test-feature"
 		if bucketKey != expected {
-			t.Errorf("GetBucketKey() = %s; want %s", bucketKey, expected)
+			t.Errorf("getBucketKey() = %s; want %s", bucketKey, expected)
 		}
 	})
 
@@ -186,16 +198,16 @@ func TestGetBucketKey(t *testing.T) {
 			"browser":  "chrome",
 		}
 
-		bucketKey := GetBucketKey(GetBucketKeyOptions{
+		bucketKey := getBucketKey(getBucketKeyOptions{
 			FeatureKey:         featureKey,
 			BucketBy:           bucketBy,
 			Context:            context,
-			featurevisorLogger: logger,
+			diagnosticReporter: diagnostics,
 		})
 
 		expected := "deviceIdHere.test-feature"
 		if bucketKey != expected {
-			t.Errorf("GetBucketKey() = %s; want %s", bucketKey, expected)
+			t.Errorf("getBucketKey() = %s; want %s", bucketKey, expected)
 		}
 	})
 
@@ -207,15 +219,15 @@ func TestGetBucketKey(t *testing.T) {
 
 		defer func() {
 			if r := recover(); r == nil {
-				t.Error("GetBucketKey should panic with invalid bucketBy")
+				t.Error("getBucketKey should panic with invalid bucketBy")
 			}
 		}()
 
-		GetBucketKey(GetBucketKeyOptions{
+		getBucketKey(getBucketKeyOptions{
 			FeatureKey:         featureKey,
 			BucketBy:           bucketBy,
 			Context:            context,
-			featurevisorLogger: logger,
+			diagnosticReporter: diagnostics,
 		})
 	})
 }
@@ -239,7 +251,7 @@ func TestToString(t *testing.T) {
 		{
 			name:     "float64",
 			input:    123.456,
-			expected: "123",
+			expected: "123.456",
 		},
 		{
 			name:     "bool true",
@@ -254,7 +266,7 @@ func TestToString(t *testing.T) {
 		{
 			name:     "nil",
 			input:    nil,
-			expected: "<nil>",
+			expected: "",
 		},
 	}
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	featurevisor "github.com/featurevisor/featurevisor-go"
+	featurevisor "github.com/featurevisor/featurevisor-go/v2"
 	of "github.com/open-feature/go-sdk/openfeature"
 )
 

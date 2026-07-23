@@ -5,38 +5,40 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 )
 
-// datafileReaderOptions contains options for creating a datafile reader
-type datafileReaderOptions struct {
+// instanceEvaluationDataProviderOptions contains options for creating a datafile reader
+type instanceEvaluationDataProviderOptions struct {
 	Datafile           DatafileContent
-	featurevisorLogger *featurevisorLogger
+	diagnosticReporter *diagnosticReporter
 }
 
-// ForceResult represents the result of a force lookup
-type ForceResult struct {
+// forceResult represents the result of a force lookup
+type forceResult struct {
 	Force      *Force `json:"force,omitempty"`
 	ForceIndex *int   `json:"forceIndex,omitempty"`
 }
 
-// datafileReader provides functionality to read and query datafile content
-type datafileReader struct {
+// instanceEvaluationDataProvider provides functionality to read and query datafile content
+type instanceEvaluationDataProvider struct {
 	schemaVersion string
 	revision      string
 	segments      map[SegmentKey]Segment
 	features      map[FeatureKey]Feature
-	logger        *featurevisorLogger
+	diagnostics   *diagnosticReporter
 	regexCache    map[string]*regexp.Regexp
+	regexCacheMu  sync.RWMutex
 }
 
-// newDatafileReader creates a new datafile reader instance
-func newDatafileReader(options datafileReaderOptions) *datafileReader {
-	return &datafileReader{
+// newInstanceEvaluationDataProvider creates a new datafile reader instance
+func newInstanceEvaluationDataProvider(options instanceEvaluationDataProviderOptions) *instanceEvaluationDataProvider {
+	return &instanceEvaluationDataProvider{
 		schemaVersion: options.Datafile.SchemaVersion,
 		revision:      options.Datafile.Revision,
 		segments:      options.Datafile.Segments,
 		features:      options.Datafile.Features,
-		logger:        options.featurevisorLogger,
+		diagnostics:   options.diagnosticReporter,
 		regexCache:    make(map[string]*regexp.Regexp),
 	}
 }
@@ -45,31 +47,31 @@ func newDatafileReader(options datafileReaderOptions) *datafileReader {
 // It mirrors the JavaScript SDK's narrow root helper export without exposing the
 // internal datafile reader implementation.
 func AllConditionsAreMatched(conditions Condition, context Context) bool {
-	reader := newDatafileReader(datafileReaderOptions{
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile: DatafileContent{
 			SchemaVersion: "2",
 			Revision:      "matcher",
 			Segments:      make(map[SegmentKey]Segment),
 			Features:      make(map[FeatureKey]Feature),
 		},
-		featurevisorLogger: newLogger(loggerOptions{}),
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{}),
 	})
 
 	return reader.AllConditionsAreMatched(conditions, context)
 }
 
 // GetRevision returns the revision of the datafile
-func (d *datafileReader) GetRevision() string {
+func (d *instanceEvaluationDataProvider) GetRevision() string {
 	return d.revision
 }
 
 // GetSchemaVersion returns the schema version of the datafile
-func (d *datafileReader) GetSchemaVersion() string {
+func (d *instanceEvaluationDataProvider) GetSchemaVersion() string {
 	return d.schemaVersion
 }
 
 // GetSegment returns a segment by its key
-func (d *datafileReader) GetSegment(segmentKey SegmentKey) *Segment {
+func (d *instanceEvaluationDataProvider) GetSegment(segmentKey SegmentKey) *Segment {
 	segment, exists := d.segments[segmentKey]
 
 	if !exists {
@@ -82,7 +84,7 @@ func (d *datafileReader) GetSegment(segmentKey SegmentKey) *Segment {
 }
 
 // GetFeatureKeys returns all feature keys
-func (d *datafileReader) GetFeatureKeys() []string {
+func (d *instanceEvaluationDataProvider) GetFeatureKeys() []string {
 	keys := make([]string, 0, len(d.features))
 	for key := range d.features {
 		keys = append(keys, string(key))
@@ -91,7 +93,7 @@ func (d *datafileReader) GetFeatureKeys() []string {
 }
 
 // GetFeature returns a feature by its key
-func (d *datafileReader) GetFeature(featureKey FeatureKey) *Feature {
+func (d *instanceEvaluationDataProvider) GetFeature(featureKey FeatureKey) *Feature {
 	feature, exists := d.features[featureKey]
 	if !exists {
 		return nil
@@ -106,7 +108,7 @@ func (d *datafileReader) GetFeature(featureKey FeatureKey) *Feature {
 }
 
 // GetVariableKeys returns the variable keys for a feature
-func (d *datafileReader) GetVariableKeys(featureKey FeatureKey) []string {
+func (d *instanceEvaluationDataProvider) GetVariableKeys(featureKey FeatureKey) []string {
 	feature := d.GetFeature(featureKey)
 
 	if feature == nil || feature.VariablesSchema == nil {
@@ -121,7 +123,7 @@ func (d *datafileReader) GetVariableKeys(featureKey FeatureKey) []string {
 }
 
 // HasVariations checks if a feature has variations
-func (d *datafileReader) HasVariations(featureKey FeatureKey) bool {
+func (d *instanceEvaluationDataProvider) HasVariations(featureKey FeatureKey) bool {
 	feature := d.GetFeature(featureKey)
 
 	if feature == nil {
@@ -131,34 +133,56 @@ func (d *datafileReader) HasVariations(featureKey FeatureKey) bool {
 	return feature.Variations != nil && len(feature.Variations) > 0
 }
 
-// GetRegex returns a regex pattern with caching
-func (d *datafileReader) GetRegex(regexString string, regexFlags string) *regexp.Regexp {
+func (d *instanceEvaluationDataProvider) getRegex(regexString string, regexFlags string) *regexp.Regexp {
 	flags := regexFlags
-	if flags == "" {
-		flags = ""
-	}
 
 	cacheKey := fmt.Sprintf("%s-%s", regexString, flags)
 
-	if d.regexCache[cacheKey] != nil {
-		return d.regexCache[cacheKey]
+	d.regexCacheMu.RLock()
+	cached := d.regexCache[cacheKey]
+	d.regexCacheMu.RUnlock()
+	if cached != nil {
+		return cached
 	}
 
-	regex := regexp.MustCompile(regexString)
+	goFlags := ""
+	for _, flag := range flags {
+		switch flag {
+		case 'i', 'm', 's':
+			if !strings.ContainsRune(goFlags, flag) {
+				goFlags += string(flag)
+			}
+		case 'g', 'u', 'y':
+			// JavaScript-only state/unicode flags need no Go equivalent.
+		default:
+			panic(fmt.Sprintf("invalid regular expression flag: %c", flag))
+		}
+	}
+	pattern := regexString
+	if goFlags != "" {
+		pattern = "(?" + goFlags + ")" + regexString
+	}
+	regex := regexp.MustCompile(pattern)
+	d.regexCacheMu.Lock()
+	if cached = d.regexCache[cacheKey]; cached != nil {
+		d.regexCacheMu.Unlock()
+		return cached
+	}
 	d.regexCache[cacheKey] = regex
+	d.regexCacheMu.Unlock()
 
 	return regex
 }
 
 // AllConditionsAreMatched checks if all conditions are matched given a context
-func (d *datafileReader) AllConditionsAreMatched(conditions Condition, context Context) bool {
+func (d *instanceEvaluationDataProvider) AllConditionsAreMatched(conditions Condition, context Context) bool {
 	// Add error handling wrapper like in TypeScript version
 	defer func() {
 		if r := recover(); r != nil {
-			d.logger.Warn("Error in condition matching", logDetails{
-				"error":      r,
-				"conditions": conditions,
-				"context":    context,
+			d.diagnostics.Warn("Error in condition matching", logDetails{
+				"error":     r,
+				"condition": conditions,
+				"context":   context,
 			})
 		}
 	}()
@@ -174,10 +198,10 @@ func (d *datafileReader) AllConditionsAreMatched(conditions Condition, context C
 	// Handle plain conditions
 	if plainCondition, ok := conditions.(PlainCondition); ok {
 		getRegex := func(regexString string, regexFlags string) *regexp.Regexp {
-			return d.GetRegex(regexString, regexFlags)
+			return d.getRegex(regexString, regexFlags)
 		}
 
-		matched := ConditionIsMatched(plainCondition, context, getRegex)
+		matched := conditionIsMatched(plainCondition, context, getRegex)
 		return matched
 	}
 
@@ -195,27 +219,32 @@ func (d *datafileReader) AllConditionsAreMatched(conditions Condition, context C
 						Value:     nil, // exists/notExists don't have values
 					}
 					getRegex := func(regexString string, regexFlags string) *regexp.Regexp {
-						return d.GetRegex(regexString, regexFlags)
+						return d.getRegex(regexString, regexFlags)
 					}
 
-					matched := ConditionIsMatched(plainCondition, context, getRegex)
+					matched := conditionIsMatched(plainCondition, context, getRegex)
 					return matched
 				}
 
 				// Handle operators that have a value
 				if value, ok := conditionMap["value"]; ok {
 					conditionValue := ConditionValue(value)
+					var regexFlags *string
+					if flags, ok := conditionMap["regexFlags"].(string); ok {
+						regexFlags = &flags
+					}
 					plainCondition := PlainCondition{
-						Attribute: AttributeKey(attribute),
-						Operator:  Operator(operator),
-						Value:     &conditionValue,
+						Attribute:  AttributeKey(attribute),
+						Operator:   Operator(operator),
+						Value:      &conditionValue,
+						RegexFlags: regexFlags,
 					}
 					getRegex := func(regexString string, regexFlags string) *regexp.Regexp {
-						return d.GetRegex(regexString, regexFlags)
+						return d.getRegex(regexString, regexFlags)
 					}
 
 					// Add error handling like in TypeScript version
-					matched := ConditionIsMatched(plainCondition, context, getRegex)
+					matched := conditionIsMatched(plainCondition, context, getRegex)
 					return matched
 				}
 			}
@@ -293,16 +322,16 @@ func (d *datafileReader) AllConditionsAreMatched(conditions Condition, context C
 }
 
 // SegmentIsMatched checks if a segment is matched given a context
-func (d *datafileReader) SegmentIsMatched(segment *Segment, context Context) bool {
+func (d *instanceEvaluationDataProvider) SegmentIsMatched(segment *Segment, context Context) bool {
 	return d.AllConditionsAreMatched(segment.Conditions, context)
 }
 
 // AllSegmentsAreMatched checks if all segments are matched given a context
-func (d *datafileReader) AllSegmentsAreMatched(groupSegments interface{}, context Context) bool {
+func (d *instanceEvaluationDataProvider) AllSegmentsAreMatched(groupSegments interface{}, context Context) bool {
 	// Add error handling wrapper like in TypeScript version
 	defer func() {
 		if r := recover(); r != nil {
-			d.logger.Warn("Error in segment matching", logDetails{
+			d.diagnostics.Warn("Error in segment matching", logDetails{
 				"error":         r,
 				"groupSegments": groupSegments,
 				"context":       context,
@@ -311,7 +340,7 @@ func (d *datafileReader) AllSegmentsAreMatched(groupSegments interface{}, contex
 	}()
 	// Handle wildcard
 	if groupSegments == "*" {
-		d.logger.Debug("matched wildcard segment", logDetails{
+		d.diagnostics.Debug("matched wildcard segment", logDetails{
 			"segments": groupSegments,
 		})
 		return true
@@ -322,7 +351,7 @@ func (d *datafileReader) AllSegmentsAreMatched(groupSegments interface{}, contex
 		segment := d.GetSegment(SegmentKey(segmentKey))
 		if segment != nil {
 			matched := d.SegmentIsMatched(segment, context)
-			d.logger.Debug("checked single segment", logDetails{
+			d.diagnostics.Debug("checked single segment", logDetails{
 				"segment": segmentKey,
 				"matched": matched,
 			})
@@ -407,18 +436,18 @@ func (d *datafileReader) AllSegmentsAreMatched(groupSegments interface{}, contex
 		}
 	}
 
-	d.logger.Debug("no segments matched", logDetails{
+	d.diagnostics.Debug("no segments matched", logDetails{
 		"segments": groupSegments,
 	})
 	return false
 }
 
 // GetMatchedTraffic returns the matched traffic for a given context
-func (d *datafileReader) GetMatchedTraffic(traffic []Traffic, context Context) *Traffic {
+func (d *instanceEvaluationDataProvider) GetMatchedTraffic(traffic []Traffic, context Context) *Traffic {
 	for _, t := range traffic {
 		segments := d.parseSegmentsIfStringified(t.Segments)
 		if d.AllSegmentsAreMatched(segments, context) {
-			d.logger.Debug("matched traffic rule", logDetails{
+			d.diagnostics.Debug("matched traffic rule", logDetails{
 				"ruleKey":  t.Key,
 				"segments": t.Segments,
 			})
@@ -429,7 +458,7 @@ func (d *datafileReader) GetMatchedTraffic(traffic []Traffic, context Context) *
 }
 
 // GetMatchedAllocation returns the matched allocation for a given bucket value
-func (d *datafileReader) GetMatchedAllocation(traffic *Traffic, bucketValue int) *Allocation {
+func (d *instanceEvaluationDataProvider) GetMatchedAllocation(traffic *Traffic, bucketValue int) *Allocation {
 	if traffic.Allocation == nil {
 		return nil
 	}
@@ -447,8 +476,8 @@ func (d *datafileReader) GetMatchedAllocation(traffic *Traffic, bucketValue int)
 }
 
 // GetMatchedForce returns the matched force for a given feature and context
-func (d *datafileReader) GetMatchedForce(featureKey interface{}, context Context) ForceResult {
-	result := ForceResult{
+func (d *instanceEvaluationDataProvider) GetMatchedForce(featureKey interface{}, context Context) forceResult {
+	result := forceResult{
 		Force:      nil,
 		ForceIndex: nil,
 	}
@@ -494,7 +523,7 @@ func (d *datafileReader) GetMatchedForce(featureKey interface{}, context Context
 }
 
 // parseConditionsIfStringified parses conditions if they are stringified
-func (d *datafileReader) parseConditionsIfStringified(conditions Condition) Condition {
+func (d *instanceEvaluationDataProvider) parseConditionsIfStringified(conditions Condition) Condition {
 	if conditionStr, ok := conditions.(string); ok {
 		if conditionStr == "*" {
 			return conditions
@@ -503,7 +532,7 @@ func (d *datafileReader) parseConditionsIfStringified(conditions Condition) Cond
 		var parsedCondition Condition
 		err := json.Unmarshal([]byte(conditionStr), &parsedCondition)
 		if err != nil {
-			d.logger.Error("Error parsing conditions", logDetails{
+			d.diagnostics.Error("Error parsing conditions", logDetails{
 				"error":      err,
 				"conditions": conditionStr,
 			})
@@ -517,13 +546,13 @@ func (d *datafileReader) parseConditionsIfStringified(conditions Condition) Cond
 }
 
 // parseSegmentsIfStringified parses segments if they are stringified
-func (d *datafileReader) parseSegmentsIfStringified(segments interface{}) interface{} {
+func (d *instanceEvaluationDataProvider) parseSegmentsIfStringified(segments interface{}) interface{} {
 	if segmentStr, ok := segments.(string); ok {
 		if strings.HasPrefix(segmentStr, "{") || strings.HasPrefix(segmentStr, "[") {
 			var parsedSegments interface{}
 			err := json.Unmarshal([]byte(segmentStr), &parsedSegments)
 			if err != nil {
-				d.logger.Error("Error parsing segments", logDetails{
+				d.diagnostics.Error("Error parsing segments", logDetails{
 					"error":    err,
 					"segments": segmentStr,
 				})
@@ -537,7 +566,7 @@ func (d *datafileReader) parseSegmentsIfStringified(segments interface{}) interf
 }
 
 // parseRequiredIfStringified parses required features if they are stringified
-func (d *datafileReader) parseRequiredIfStringified(required []Required) []Required {
+func (d *instanceEvaluationDataProvider) parseRequiredIfStringified(required []Required) []Required {
 	parsedRequired := make([]Required, len(required))
 
 	for i, req := range required {

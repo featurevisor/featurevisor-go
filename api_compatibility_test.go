@@ -104,6 +104,21 @@ func TestAPICompatibilityWithStringFeatureKey(t *testing.T) {
 	if childVariable == nil {
 		t.Error("Expected child variable to be returned")
 	}
+
+	flagEvaluation := child.EvaluateFlag("test-feature")
+	if flagEvaluation.Enabled == nil || !*flagEvaluation.Enabled {
+		t.Fatalf("expected child flag evaluation to be enabled, got %#v", flagEvaluation)
+	}
+
+	variationEvaluation := child.EvaluateVariation("test-feature")
+	if variationEvaluation.VariationValue == nil || string(*variationEvaluation.VariationValue) != *childVariation {
+		t.Fatalf("expected child variation evaluation to match getter, got %#v", variationEvaluation)
+	}
+
+	variableEvaluation := child.EvaluateVariable("test-feature", "color")
+	if variableEvaluation.VariableValue != "blue" {
+		t.Fatalf("expected child variable evaluation value blue, got %#v", variableEvaluation)
+	}
 }
 
 func TestAPICompatibilityWithNonExistentFeature(t *testing.T) {

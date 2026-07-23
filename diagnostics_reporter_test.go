@@ -46,39 +46,39 @@ func TestAllLevelsOrder(t *testing.T) {
 	}
 }
 
-func TestNewLogger(t *testing.T) {
-	// Test default logger
-	logger := newLogger(loggerOptions{})
-	if logger.GetLevel() != defaultLevel {
-		t.Errorf("Default level = %s, expected %s", logger.GetLevel(), defaultLevel)
+func TestNewDiagnosticReporter(t *testing.T) {
+	// Test default diagnostics
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
+	if diagnostics.GetLevel() != defaultLevel {
+		t.Errorf("Default level = %s, expected %s", diagnostics.GetLevel(), defaultLevel)
 	}
 
-	// Test logger with custom level
+	// Test diagnostics with custom level
 	customLevel := LogLevelDebug
-	logger = newLogger(loggerOptions{
+	diagnostics = newDiagnosticReporter(diagnosticReporterOptions{
 		Level: &customLevel,
 	})
-	if logger.GetLevel() != customLevel {
-		t.Errorf("Custom level = %s, expected %s", logger.GetLevel(), customLevel)
+	if diagnostics.GetLevel() != customLevel {
+		t.Errorf("Custom level = %s, expected %s", diagnostics.GetLevel(), customLevel)
 	}
 }
 
 func TestLoggerSetLevel(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 
 	// Test setting different levels
 	testLevels := []LogLevel{LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError, LogLevelFatal}
 
 	for _, level := range testLevels {
-		logger.SetLevel(level)
-		if logger.GetLevel() != level {
-			t.Errorf("Set level = %s, but GetLevel() returned %s", level, logger.GetLevel())
+		diagnostics.SetLevel(level)
+		if diagnostics.GetLevel() != level {
+			t.Errorf("Set level = %s, but GetLevel() returned %s", level, diagnostics.GetLevel())
 		}
 	}
 }
 
 func TestLoggerShouldHandle(t *testing.T) {
-	logger := newLogger(loggerOptions{})
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 
 	tests := []struct {
 		name         string
@@ -144,8 +144,8 @@ func TestLoggerShouldHandle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger.SetLevel(tt.currentLevel)
-			result := logger.shouldHandle(tt.targetLevel)
+			diagnostics.SetLevel(tt.currentLevel)
+			result := diagnostics.shouldHandle(tt.targetLevel)
 			if result != tt.shouldHandle {
 				t.Errorf("shouldHandle(%s) with level %s = %v, expected %v",
 					tt.targetLevel, tt.currentLevel, result, tt.shouldHandle)
@@ -197,7 +197,7 @@ func TestDefaultLogHandler(t *testing.T) {
 		t.Run(string(tc.level), func(t *testing.T) {
 			buf.Reset()
 
-			defaultLogHandler(tc.level, tc.message, tc.details)
+			defaultDiagnosticHandler(tc.level, tc.message, tc.details)
 
 			output := buf.String()
 			if !strings.Contains(output, tc.expect) {
@@ -217,7 +217,7 @@ func TestLoggerMethods(t *testing.T) {
 	defer log.SetOutput(os.Stderr)
 
 	level := LogLevelInfo
-	logger := newLogger(loggerOptions{
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{
 		Level: &level,
 	})
 
@@ -230,28 +230,28 @@ func TestLoggerMethods(t *testing.T) {
 		{
 			name: "Debug",
 			method: func() {
-				logger.Debug("debug message", logDetails{"debug": true})
+				diagnostics.Debug("debug message", logDetails{"debug": true})
 			},
 			expect: "", // Debug messages should be filtered out at info level
 		},
 		{
 			name: "Info",
 			method: func() {
-				logger.Info("info message", logDetails{"info": true})
+				diagnostics.Info("info message", logDetails{"info": true})
 			},
 			expect: "info",
 		},
 		{
 			name: "Warn",
 			method: func() {
-				logger.Warn("warn message", logDetails{"warn": true})
+				diagnostics.Warn("warn message", logDetails{"warn": true})
 			},
 			expect: "warn",
 		},
 		{
 			name: "Error",
 			method: func() {
-				logger.Error("error message", logDetails{"error": true})
+				diagnostics.Error("error message", logDetails{"error": true})
 			},
 			expect: "error",
 		},
@@ -283,20 +283,20 @@ func TestCustomLogHandler(t *testing.T) {
 	var capturedMessage logMessage
 	var capturedDetails logDetails
 
-	var customHandler logHandler = func(level LogLevel, message logMessage, details logDetails) {
+	var customHandler diagnosticOutputHandler = func(level LogLevel, message logMessage, details logDetails) {
 		capturedLevel = level
 		capturedMessage = message
 		capturedDetails = details
 	}
 
-	logger := newLogger(loggerOptions{
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{
 		Handler: &customHandler,
 	})
 
 	expectedMessage := logMessage("test message")
 	expectedDetails := logDetails{"key": "value"}
 
-	logger.Info(expectedMessage, expectedDetails)
+	diagnostics.Info(expectedMessage, expectedDetails)
 
 	if capturedLevel != LogLevelInfo {
 		t.Errorf("Captured level = %s, expected %s", capturedLevel, LogLevelInfo)
@@ -311,26 +311,26 @@ func TestCustomLogHandler(t *testing.T) {
 
 func TestInternalLoggerFactory(t *testing.T) {
 	// Test with no options
-	logger := newLogger(loggerOptions{})
-	if logger.GetLevel() != defaultLevel {
-		t.Errorf("CreateLogger default level = %s, expected %s", logger.GetLevel(), defaultLevel)
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
+	if diagnostics.GetLevel() != defaultLevel {
+		t.Errorf("newDiagnosticReporter default level = %s, expected %s", diagnostics.GetLevel(), defaultLevel)
 	}
 
 	// Test with custom options
 	customLevel := LogLevelDebug
-	logger = newLogger(loggerOptions{
+	diagnostics = newDiagnosticReporter(diagnosticReporterOptions{
 		Level: &customLevel,
 	})
-	if logger.GetLevel() != customLevel {
-		t.Errorf("CreateLogger custom level = %s, expected %s", logger.GetLevel(), customLevel)
+	if diagnostics.GetLevel() != customLevel {
+		t.Errorf("newDiagnosticReporter custom level = %s, expected %s", diagnostics.GetLevel(), customLevel)
 	}
 }
 
 func BenchmarkLoggerInfo(b *testing.B) {
-	logger := newLogger(loggerOptions{})
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		logger.Info("benchmark message", logDetails{"benchmark": i})
+		diagnostics.Info("benchmark message", logDetails{"benchmark": i})
 	}
 }

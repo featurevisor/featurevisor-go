@@ -490,6 +490,59 @@ func TestModulesSetupDiagnosticsAndClose(t *testing.T) {
 	}
 }
 
+func TestModuleDiagnosticLevelsAreIndependentFromInstanceLevel(t *testing.T) {
+	fatal := LogLevelFatal
+	observed := []FeaturevisorDiagnostic{}
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		LogLevel: &fatal,
+		Modules: []*FeaturevisorModule{{
+			Name: "observer",
+			Setup: func(api FeaturevisorModuleApi) {
+				api.OnDiagnostic(func(diagnostic FeaturevisorDiagnostic) {
+					observed = append(observed, diagnostic)
+				}, FeaturevisorModuleDiagnosticOptions{LogLevel: LogLevelDebug})
+			},
+		}},
+	})
+
+	instance.IsEnabled("missing")
+
+	found := false
+	for _, diagnostic := range observed {
+		if diagnostic.Code == "feature_not_found" {
+			found = true
+			if diagnostic.Details["featureKey"] != FeatureKey("missing") {
+				t.Fatalf("expected canonical featureKey details, got %#v", diagnostic.Details)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected debug module subscriber to receive evaluator diagnostics, got %#v", observed)
+	}
+}
+
+func TestExplicitNilVariableDefaultIsApplied(t *testing.T) {
+	fatal := LogLevelFatal
+	instance := CreateFeaturevisor(FeaturevisorOptions{LogLevel: &fatal})
+
+	evaluation := instance.EvaluateVariable(
+		"missing",
+		"value",
+		Context{},
+		OverrideOptions{
+			DefaultVariableValue:    nil,
+			DefaultVariableValueSet: true,
+		},
+	)
+
+	if evaluation.Reason != EvaluationReasonFeatureNotFound {
+		t.Fatalf("expected feature_not_found, got %q", evaluation.Reason)
+	}
+	if evaluation.VariableValue != nil {
+		t.Fatalf("expected explicit nil default, got %#v", evaluation.VariableValue)
+	}
+}
+
 func TestModuleSetupFailureIsIsolated(t *testing.T) {
 	var diagnostics []FeaturevisorDiagnostic
 	closed := 0
@@ -987,4 +1040,59 @@ func TestLifecycleMutationsReportDiagnostics(t *testing.T) {
 			t.Fatalf("expected %s diagnostic, got %#v", code, diagnostics)
 		}
 	}
+}
+
+func TestInvalidSemverReportsPortableConditionDiagnostic(t *testing.T) {
+	var datafile DatafileContent
+	if err := datafile.FromJSON(`{
+		"schemaVersion": "2",
+		"revision": "1",
+		"segments": {
+			"version": {
+				"key": "version",
+				"conditions": [{"attribute": "version", "operator": "semverGreaterThan", "value": "1.0.0"}]
+			}
+		},
+		"features": {
+			"test": {
+				"key": "test",
+				"bucketBy": "userId",
+				"traffic": [{"key": "all", "segments": ["version"], "percentage": 100000, "enabled": true}]
+			}
+		}
+	}`); err != nil {
+		t.Fatal(err)
+	}
+
+	level := LogLevelDebug
+	diagnostics := []FeaturevisorDiagnostic{}
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		Datafile: &datafile,
+		LogLevel: &level,
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			diagnostics = append(diagnostics, diagnostic)
+		},
+	})
+
+	if instance.IsEnabled("test", Context{"userId": "user", "version": "invalid"}) {
+		t.Fatal("expected invalid semantic version not to match")
+	}
+
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code != "condition_match_error" {
+			continue
+		}
+		if diagnostic.OriginalError == nil {
+			t.Fatal("expected condition diagnostic to preserve original error")
+		}
+		if _, ok := diagnostic.Details["condition"]; !ok {
+			t.Fatalf("expected condition details, got %#v", diagnostic.Details)
+		}
+		if _, ok := diagnostic.Details["context"]; !ok {
+			t.Fatalf("expected context details, got %#v", diagnostic.Details)
+		}
+		return
+	}
+
+	t.Fatalf("expected condition_match_error diagnostic, got %#v", diagnostics)
 }
