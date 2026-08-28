@@ -431,6 +431,24 @@ type GlobalVariable struct {
 	UseDefaultWhenDisabled bool               `json:"useDefaultWhenDisabled,omitempty"`
 	RequiredFeatures       []Required         `json:"requiredFeatures,omitempty"`
 	Overrides              []VariableOverride `json:"overrides,omitempty"`
+	defaultValueSet        bool
+	disabledValueSet       bool
+}
+
+func (variable *GlobalVariable) UnmarshalJSON(data []byte) error {
+	type alias GlobalVariable
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*variable = GlobalVariable(decoded)
+	_, variable.defaultValueSet = fields["defaultValue"]
+	_, variable.disabledValueSet = fields["disabledValue"]
+	return nil
 }
 
 // VariableSchema represents the schema of a variable
@@ -458,6 +476,24 @@ type VariableSchema struct {
 	Description            *string        `json:"description,omitempty"`
 	UseDefaultWhenDisabled *bool          `json:"useDefaultWhenDisabled,omitempty"`
 	DisabledValue          *VariableValue `json:"disabledValue,omitempty"`
+	defaultValueSet        bool
+	disabledValueSet       bool
+}
+
+func (schema *VariableSchema) UnmarshalJSON(data []byte) error {
+	type alias VariableSchema
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*schema = VariableSchema(decoded)
+	_, schema.defaultValueSet = fields["defaultValue"]
+	_, schema.disabledValueSet = fields["disabledValue"]
+	return nil
 }
 
 /**

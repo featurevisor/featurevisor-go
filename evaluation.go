@@ -73,4 +73,5 @@ type Evaluation struct {
 	VariableOverrideIndex *int            `json:"variableOverrideIndex,omitempty"`
 	VariableOverrideKey   *string         `json:"variableOverrideKey,omitempty"`
 	VariableOverridePath  []string        `json:"variableOverridePath,omitempty"`
+	variableValueSet      bool
 }

@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// instanceEvaluationDataProviderOptions contains options for creating a datafile reader
+// instanceEvaluationDataProviderOptions contains options for creating an evaluation data provider.
 type instanceEvaluationDataProviderOptions struct {
 	Datafile           DatafileContent
 	diagnosticReporter *diagnosticReporter
@@ -32,7 +32,7 @@ type instanceEvaluationDataProvider struct {
 	regexCacheMu  sync.RWMutex
 }
 
-// newInstanceEvaluationDataProvider creates a new datafile reader instance
+// newInstanceEvaluationDataProvider creates an evaluation data provider.
 func newInstanceEvaluationDataProvider(options instanceEvaluationDataProviderOptions) *instanceEvaluationDataProvider {
 	return &instanceEvaluationDataProvider{
 		schemaVersion: options.Datafile.SchemaVersion,
@@ -47,7 +47,7 @@ func newInstanceEvaluationDataProvider(options instanceEvaluationDataProviderOpt
 
 // AllConditionsAreMatched checks whether a condition tree matches the given context.
 // It mirrors the JavaScript SDK's narrow root helper export without exposing the
-// internal datafile reader implementation.
+// internal evaluation data provider implementation.
 func AllConditionsAreMatched(conditions Condition, context Context) bool {
 	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile: DatafileContent{

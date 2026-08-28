@@ -89,7 +89,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 				stickyFeatures[featurevisor.FeatureKey(key)] = evaluatedFeature
 			}
 		}
-		instance.SetSticky(stickyFeatures, false)
+		instance.SetStickyFeatures(stickyFeatures, false)
 	}
 
 	// Create override options
@@ -266,7 +266,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 							stickyFeatures[featurevisor.FeatureKey(key)] = evaluatedFeature
 						}
 					}
-					childInstance.SetSticky(stickyFeatures, false)
+					childInstance.SetStickyFeatures(stickyFeatures, false)
 				}
 
 				childResult := RunTestFeatureChild(childMap, featureKey, childInstance, level)

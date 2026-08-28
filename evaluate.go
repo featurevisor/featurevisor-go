@@ -62,9 +62,11 @@ func evaluateWithModules(opts EvaluateOptions) Evaluation {
 	// Run the legacy feature callback and the unified evaluation callback.
 	options := opts
 	for _, module := range modules {
-		if !opts.GlobalVariable && module.Before != nil {
+		if !options.GlobalVariable && module.Before != nil {
 			options = module.Before(options)
 		}
+	}
+	for _, module := range modules {
 		if module.BeforeEvaluation != nil {
 			options = module.BeforeEvaluation(options)
 		}
@@ -78,26 +80,29 @@ func evaluateWithModules(opts EvaluateOptions) Evaluation {
 	}
 
 	// default: variation
-	if opts.DefaultVariationValue != nil &&
+	if options.DefaultVariationValue != nil &&
 		evaluation.Type == EvaluationTypeVariation &&
 		evaluation.VariationValue == nil {
-		evaluation.VariationValue = opts.DefaultVariationValue
+		evaluation.VariationValue = options.DefaultVariationValue
 	}
 
 	// default: variable
-	if opts.DefaultVariableValueSet &&
+	if options.DefaultVariableValueSet &&
 		evaluation.Type == EvaluationTypeVariable &&
-		evaluation.VariableValue == nil {
-		evaluation.VariableValue = opts.DefaultVariableValue
+		!evaluation.variableValueSet && evaluation.VariableValue == nil {
+		evaluation.VariableValue = options.DefaultVariableValue
+		evaluation.variableValueSet = true
 	}
 
 	// run after modules
 	for _, module := range modules {
-		if !opts.GlobalVariable && module.After != nil {
-			evaluation = module.After(evaluation, options)
-		}
 		if module.AfterEvaluation != nil {
 			evaluation = module.AfterEvaluation(evaluation, options)
+		}
+	}
+	for _, module := range modules {
+		if !options.GlobalVariable && module.After != nil {
+			evaluation = module.After(evaluation, options)
 		}
 	}
 
@@ -211,6 +216,13 @@ func variableOverrideIsMatched(override VariableOverride, dependencies evaluateD
 	return matchedSelector
 }
 
+func variableValueFromPointer(value *VariableValue) VariableValue {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
 func evaluateGlobalVariable(options EvaluateOptions) Evaluation {
 	key := GlobalVariableKey("")
 	if options.VariableKey != nil {
@@ -221,6 +233,7 @@ func evaluateGlobalVariable(options EvaluateOptions) Evaluation {
 		if value, ok := (*options.stickyVariables)[key]; ok {
 			base.Reason = EvaluationReasonSticky
 			base.VariableValue = value
+			base.variableValueSet = true
 			return base
 		}
 	}
@@ -236,8 +249,10 @@ func evaluateGlobalVariable(options EvaluateOptions) Evaluation {
 		base.Reason = EvaluationReasonRequiredFeaturesUnmet
 		if variable.UseDefaultWhenDisabled {
 			base.VariableValue = variable.DefaultValue
-		} else if variable.DisabledValue != nil {
+			base.variableValueSet = variable.defaultValueSet
+		} else if variable.disabledValueSet {
 			base.VariableValue = variable.DisabledValue
+			base.variableValueSet = true
 		}
 		return base
 	}
@@ -245,6 +260,7 @@ func evaluateGlobalVariable(options EvaluateOptions) Evaluation {
 		if variableOverrideIsMatched(override, options.evaluateDependencies) {
 			base.Reason = EvaluationReasonVariableOverrideRule
 			base.VariableValue = override.Value
+			base.variableValueSet = true
 			base.VariableOverrideIndex = &index
 			base.VariableOverrideKey = override.Key
 			base.VariableOverridePath = override.KeyPath
@@ -253,6 +269,7 @@ func evaluateGlobalVariable(options EvaluateOptions) Evaluation {
 	}
 	base.Reason = EvaluationReasonVariableDefault
 	base.VariableValue = variable.DefaultValue
+	base.variableValueSet = variable.defaultValueSet
 	return base
 }
 
@@ -350,6 +367,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 						VariableKey:   options.VariableKey,
 						VariableValue: variableValue,
 					}
+					evaluation.variableValueSet = true
 
 					options.diagnosticReporter.Debug("using sticky variable", logDetails{
 						"evaluation": evaluation,
@@ -435,17 +453,18 @@ func evaluate(options EvaluateOptions) Evaluation {
 			if options.Type == EvaluationTypeVariable {
 				if feature != nil && options.VariableKey != nil && feature.VariablesSchema != nil {
 					if variableSchema, exists := feature.VariablesSchema[*options.VariableKey]; exists {
-						if variableSchema.DisabledValue != nil {
+						if variableSchema.disabledValueSet {
 							// disabledValue: <value>
 							evaluation = Evaluation{
 								Type:           options.Type,
 								FeatureKey:     options.FeatureKey,
 								Reason:         EvaluationReasonVariableDisabled,
 								VariableKey:    options.VariableKey,
-								VariableValue:  *variableSchema.DisabledValue,
+								VariableValue:  variableValueFromPointer(variableSchema.DisabledValue),
 								VariableSchema: &variableSchema,
 								Enabled:        &[]bool{false}[0],
 							}
+							evaluation.variableValueSet = true
 						} else if variableSchema.UseDefaultWhenDisabled != nil && *variableSchema.UseDefaultWhenDisabled {
 							// useDefaultWhenDisabled: true
 							evaluation = Evaluation{
@@ -457,6 +476,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 								VariableSchema: &variableSchema,
 								Enabled:        &[]bool{false}[0],
 							}
+							evaluation.variableValueSet = variableSchema.defaultValueSet
 						}
 					}
 				}
@@ -544,6 +564,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 					VariableSchema: variableSchema,
 					VariableValue:  variableValue,
 				}
+				evaluation.variableValueSet = true
 
 				options.diagnosticReporter.Debug("forced variable", logDetails{
 					"evaluation": evaluation,
@@ -564,12 +585,15 @@ func evaluate(options EvaluateOptions) Evaluation {
 		}
 		if len(requiredFeatures) > 0 && !requiredFeaturesAreMatched(requiredFeatures, options.evaluateDependencies) {
 			evaluation = Evaluation{
-				Type:             options.Type,
-				FeatureKey:       options.FeatureKey,
-				Reason:           EvaluationReasonRequired,
-				Required:         requiredFeatures,
-				RequiredFeatures: requiredFeatures,
-				Enabled:          &[]bool{false}[0],
+				Type:       options.Type,
+				FeatureKey: options.FeatureKey,
+				Reason:     EvaluationReasonRequired,
+				Enabled:    &[]bool{false}[0],
+			}
+			if len(feature.RequiredFeatures) > 0 {
+				evaluation.RequiredFeatures = feature.RequiredFeatures
+			} else {
+				evaluation.Required = feature.Required
 			}
 
 			options.diagnosticReporter.Debug("required features not enabled", logDetails{
@@ -916,6 +940,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 								VariableOverrideKey:   override.Key,
 								VariableOverridePath:  override.KeyPath,
 							}
+							evaluation.variableValueSet = true
 
 							options.diagnosticReporter.Debug("variable override from rule", logDetails{
 								"evaluation": evaluation,
@@ -941,6 +966,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 						VariableSchema: variableSchema,
 						VariableValue:  variableValue,
 					}
+					evaluation.variableValueSet = true
 
 					options.diagnosticReporter.Debug("override from rule", logDetails{
 						"evaluation": evaluation,
@@ -990,6 +1016,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 										VariableOverrideKey:   override.Key,
 										VariableOverridePath:  override.KeyPath,
 									}
+									evaluation.variableValueSet = true
 
 									options.diagnosticReporter.Debug("variable override from variation", logDetails{
 										"evaluation": evaluation,
@@ -1020,6 +1047,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 								VariableSchema: variableSchema,
 								VariableValue:  variableValue,
 							}
+							evaluation.variableValueSet = true
 
 							options.diagnosticReporter.Debug("allocated variable", logDetails{
 								"evaluation": evaluation,
@@ -1033,7 +1061,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 		}
 
 		// Check for default value from variable schema
-		if variableSchema.DefaultValue != nil {
+		if variableSchema.defaultValueSet {
 			evaluation = Evaluation{
 				Type:           options.Type,
 				FeatureKey:     options.FeatureKey,
@@ -1044,6 +1072,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 				VariableSchema: variableSchema,
 				VariableValue:  variableSchema.DefaultValue,
 			}
+			evaluation.variableValueSet = variableSchema.defaultValueSet
 
 			options.diagnosticReporter.Debug("using default value", logDetails{
 				"evaluation": evaluation,
@@ -1100,6 +1129,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 				VariableSchema: variableSchema,
 				VariableValue:  variableSchema.DefaultValue,
 			}
+			evaluation.variableValueSet = variableSchema.defaultValueSet
 
 			options.diagnosticReporter.Debug("using default value", logDetails{
 				"evaluation": evaluation,

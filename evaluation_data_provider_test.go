@@ -208,7 +208,7 @@ func TestInstanceEvaluationDataProviderAllConditionsAreMatched(t *testing.T) {
 	}
 }
 
-// TestInstanceEvaluationDataProviderComprehensive tests comprehensive datafile reader functionality
+// TestInstanceEvaluationDataProviderComprehensive tests the complete evaluation data provider.
 func TestInstanceEvaluationDataProviderComprehensive(t *testing.T) {
 	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{})
 

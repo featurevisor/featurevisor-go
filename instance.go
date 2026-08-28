@@ -17,7 +17,6 @@ type OverrideOptions struct {
 
 // SpawnOptions configures a child SDK instance.
 type SpawnOptions struct {
-	Sticky          *StickyFeatures
 	StickyFeatures  *StickyFeatures
 	StickyVariables *StickyVariables
 }
@@ -28,7 +27,6 @@ type FeaturevisorOptions struct {
 	Context         Context
 	LogLevel        *LogLevel
 	OnDiagnostic    FeaturevisorDiagnosticHandler
-	Sticky          *StickyFeatures
 	StickyFeatures  *StickyFeatures
 	StickyVariables *StickyVariables
 	Modules         []*FeaturevisorModule
@@ -171,13 +169,8 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 		emitter:                        emitter,
 		datafile:                       emptyDatafile,
 		instanceEvaluationDataProvider: instanceEvaluationDataProvider,
-		sticky: func() *StickyFeatures {
-			if options.StickyFeatures != nil {
-				return options.StickyFeatures
-			}
-			return options.Sticky
-		}(),
-		stickyVariables: options.StickyVariables,
+		sticky:                         options.StickyFeatures,
+		stickyVariables:                options.StickyVariables,
 	}
 
 	instance.modulesManager = newModulesManager(modulesManagerOptions{
@@ -252,8 +245,8 @@ func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
 	i.emitter.Trigger(EventNameDatafileSet, EventDetails(details))
 }
 
-// SetSticky sets sticky features
-func (i *Featurevisor) SetSticky(sticky StickyFeatures, replace ...bool) {
+// SetStickyFeatures sets sticky feature evaluations.
+func (i *Featurevisor) SetStickyFeatures(sticky StickyFeatures, replace ...bool) {
 	if i.closed {
 		return
 	}
@@ -282,21 +275,15 @@ func (i *Featurevisor) SetSticky(sticky StickyFeatures, replace ...bool) {
 		i.sticky = &newSticky
 	}
 
-	params := getParamsForStickySetEvent(previousStickyFeatures, *i.sticky, replaceValue)
+	params := getParamsForStickyFeaturesSetEvent(previousStickyFeatures, *i.sticky, replaceValue)
 
 	i.reportDiagnostic(FeaturevisorDiagnostic{
 		Level:   LogLevelInfo,
-		Code:    "sticky_set",
+		Code:    "sticky_features_set",
 		Message: "Sticky features set",
 		Details: params,
 	}, nil)
-	i.emitter.Trigger(EventNameStickySet, EventDetails(params))
 	i.emitter.Trigger(EventNameStickyFeaturesSet, EventDetails(params))
-}
-
-// SetStickyFeatures sets sticky feature evaluations.
-func (i *Featurevisor) SetStickyFeatures(sticky StickyFeatures, replace ...bool) {
-	i.SetSticky(sticky, replace...)
 }
 
 // SetStickyVariables sets sticky global variable values.
@@ -338,7 +325,6 @@ func (i *Featurevisor) SetStickyVariables(sticky StickyVariables, replace ...boo
 	details := logDetails{"variables": keys, "replaced": replaceValue}
 	i.reportDiagnostic(FeaturevisorDiagnostic{Level: LogLevelInfo, Code: "sticky_variables_set", Message: "Sticky variables set", Details: details}, nil)
 	i.emitter.Trigger(EventNameStickyVariablesSet, EventDetails(details))
-	i.emitter.Trigger(EventNameStickySet, EventDetails{"features": []string{}, "variables": keys, "replaced": replaceValue})
 }
 
 // GetRevision returns the revision
@@ -608,14 +594,9 @@ func (i *Featurevisor) Spawn(args ...interface{}) *FeaturevisorChild {
 	}
 
 	return newFeaturevisorChild(childOptions{
-		Parent:  i,
-		Context: i.GetContext(contextValue),
-		Sticky: func() *StickyFeatures {
-			if optionsValue.StickyFeatures != nil {
-				return optionsValue.StickyFeatures
-			}
-			return optionsValue.Sticky
-		}(),
+		Parent:          i,
+		Context:         i.GetContext(contextValue),
+		Sticky:          optionsValue.StickyFeatures,
 		StickyVariables: optionsValue.StickyVariables,
 	})
 }
@@ -659,7 +640,10 @@ func (i *Featurevisor) EvaluateGlobalVariable(variableKey string, args ...interf
 
 // GetGlobalVariable gets an independently defined variable.
 func (i *Featurevisor) GetGlobalVariable(variableKey string, args ...interface{}) VariableValue {
-	evaluation := i.EvaluateGlobalVariable(variableKey, args...)
+	return getGlobalVariableValue(i.EvaluateGlobalVariable(variableKey, args...))
+}
+
+func getGlobalVariableValue(evaluation Evaluation) VariableValue {
 	if evaluation.VariableValue == nil {
 		return nil
 	}
@@ -1073,8 +1057,8 @@ func (i *Featurevisor) GetVariableObjectInto(featureKey string, variableKey stri
 	return decodeInto(objectValue, out)
 }
 
-// GetAllEvaluations gets all evaluations for features
-func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, options OverrideOptions) EvaluatedFeatures {
+// GetFeatureEvaluations evaluates a feature snapshot.
+func (i *Featurevisor) GetFeatureEvaluations(context Context, featureKeys []string, options OverrideOptions) EvaluatedFeatures {
 	result := EvaluatedFeatures{}
 
 	keys := featureKeys
@@ -1119,11 +1103,6 @@ func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, 
 	}
 
 	return result
-}
-
-// GetFeatureEvaluations evaluates a feature snapshot.
-func (i *Featurevisor) GetFeatureEvaluations(context Context, featureKeys []string, options OverrideOptions) EvaluatedFeatures {
-	return i.GetAllEvaluations(context, featureKeys, options)
 }
 
 // GetVariableEvaluations evaluates a global variable snapshot.

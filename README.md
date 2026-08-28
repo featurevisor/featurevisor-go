@@ -657,6 +657,8 @@ And optionally these properties depending on whether you are evaluating a featur
 
 Modules allow you to intercept the evaluation process and customize it further as per your needs.
 
+For feature evaluations, all `Before` callbacks run in registration order, followed by all `BeforeEvaluation` callbacks. After evaluation and caller defaults, all `AfterEvaluation` callbacks run, followed by all `After` callbacks. Global variable evaluations use only `BeforeEvaluation` and `AfterEvaluation`. Required feature checks run through the complete module pipeline, and transformed defaults are preserved.
+
 ### Defining a module
 
 A module is a simple struct with a recommended unique `Name` and optional functions:
@@ -779,7 +781,7 @@ variableValue := childF.GetVariable("my_feature", "my_variable")
 Similar to parent SDK, child instances also support several additional methods:
 
 - `SetContext`
-- `SetSticky`
+- `SetStickyFeatures`
 - `EvaluateFlag`
 - `IsEnabled`
 - `EvaluateVariation`
@@ -795,7 +797,6 @@ Similar to parent SDK, child instances also support several additional methods:
 - `GetVariableObject`
 - `GetVariableObjectInto`
 - `GetVariableJSON`
-- `GetAllEvaluations`
 - `On`
 - `Close`
 

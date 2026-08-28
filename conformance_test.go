@@ -196,7 +196,7 @@ func loadConformanceFixture(t *testing.T) conformanceFixture {
 
 func TestSDKV3ConformanceFixture(t *testing.T) {
 	fixture := loadConformanceFixture(t)
-	if fixture.Version != 5 {
+	if fixture.Version != 6 {
 		t.Fatalf("unexpected fixture version %d", fixture.Version)
 	}
 
@@ -263,7 +263,7 @@ func TestSDKV3ConformanceFixture(t *testing.T) {
 	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: fixture.Defaults.AggregateCase.Datafile,
 	})
-	actualDefault := instance.GetAllEvaluations(
+	actualDefault := instance.GetFeatureEvaluations(
 		Context{},
 		nil,
 		OverrideOptions{DefaultVariationValue: &defaultVariation},

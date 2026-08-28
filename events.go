@@ -252,8 +252,8 @@ func getParamsForDatafileSetEvent(
 	}
 }
 
-// getParamsForStickySetEvent gets parameters for sticky set event
-func getParamsForStickySetEvent(previousStickyFeatures StickyFeatures, newStickyFeatures StickyFeatures, replace bool) logDetails {
+// getParamsForStickyFeaturesSetEvent gets parameters for a sticky features set event.
+func getParamsForStickyFeaturesSetEvent(previousStickyFeatures StickyFeatures, newStickyFeatures StickyFeatures, replace bool) logDetails {
 	keysBefore := make([]string, 0, len(previousStickyFeatures))
 	for key := range previousStickyFeatures {
 		keysBefore = append(keysBefore, string(key))

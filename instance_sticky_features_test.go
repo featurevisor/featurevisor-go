@@ -41,7 +41,7 @@ func TestStickyFeaturesInitialization(t *testing.T) {
 	// Create instance with sticky features and datafile
 	instance := CreateFeaturevisor(FeaturevisorOptions{
 		Datafile: datafileContent,
-		Sticky: &StickyFeatures{
+		StickyFeatures: &StickyFeatures{
 			"test": EvaluatedFeature{
 				Enabled:   true,
 				Variation: stringPtr("control"),
@@ -111,7 +111,7 @@ func TestStickyFeaturesInitialization(t *testing.T) {
 	}
 
 	// Unset sticky features
-	instance.SetSticky(StickyFeatures{}, true)
+	instance.SetStickyFeatures(StickyFeatures{}, true)
 
 	// Should now be treatment (from datafile)
 	variation = instance.GetVariation("test", context, OverrideOptions{})
@@ -126,11 +126,11 @@ func TestSetStickyVariadicSignature(t *testing.T) {
 
 	// Test calling without replace parameter (should default to false)
 	sticky1 := StickyFeatures{"test1": EvaluatedFeature{Enabled: true}}
-	instance.SetSticky(sticky1)
+	instance.SetStickyFeatures(sticky1)
 
 	// Test calling with replace parameter
 	sticky2 := StickyFeatures{"test2": EvaluatedFeature{Enabled: false}}
-	instance.SetSticky(sticky2, true)
+	instance.SetStickyFeatures(sticky2, true)
 
 	// Verify that the second call replaced the first (since replace=true)
 	if instance.sticky == nil {
