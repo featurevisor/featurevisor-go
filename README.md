@@ -21,8 +21,9 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
 - [Getting variation](#getting-variation)
 - [Getting variables](#getting-variables)
   - [Type specific methods](#type-specific-methods)
+- [Getting global variables](#getting-global-variables)
 - [Getting all evaluations](#getting-all-evaluations)
-- [Sticky](#sticky)
+- [Sticky features and variables](#sticky-features-and-variables)
   - [Initialize with sticky](#initialize-with-sticky)
   - [Set sticky afterwards](#set-sticky-afterwards)
 - [Setting datafile](#setting-datafile)
@@ -37,7 +38,8 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
 - [Events](#events)
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
-  - [`sticky_set`](#sticky_set)
+  - [`sticky_features_set`](#sticky_features_set)
+  - [`sticky_variables_set`](#sticky_variables_set)
   - [`error`](#error)
 - [Evaluation details](#evaluation-details)
 - [Modules](#modules)
@@ -63,7 +65,7 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
 In your Go application, install the SDK using Go modules:
 
 ```bash
-go get github.com/featurevisor/featurevisor-go/v2
+go get github.com/featurevisor/featurevisor-go/v3
 ```
 
 ## Public API
@@ -78,7 +80,7 @@ f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
 
 Most applications only need `CreateFeaturevisor`, the `Featurevisor` instance type, and `FeaturevisorOptions`. Public extension and observability types include `FeaturevisorModule`, `FeaturevisorDiagnostic`, and the datafile model types.
 
-Concurrent evaluations are safe after an instance is configured. Do not call state-changing methods such as `SetDatafile`, `SetContext`, `SetSticky`, `AddModule`, `RemoveModule`, or `Close` concurrently with evaluations or with each other. Apply those changes from a serialized update path. Module, event, and diagnostic callbacks must synchronize mutable state that they capture.
+Concurrent evaluations are safe after an instance is configured. Do not call state-changing methods such as `SetDatafile`, `SetContext`, `SetStickyFeatures`, `SetStickyVariables`, `AddModule`, `RemoveModule`, or `Close` concurrently with evaluations or with each other. Apply those changes from a serialized update path. Module, event, and diagnostic callbacks must synchronize mutable state that they capture.
 
 ## Initialization
 
@@ -91,7 +93,7 @@ import (
     "io"
     "net/http"
 
-    "github.com/featurevisor/featurevisor-go/v2"
+    "github.com/featurevisor/featurevisor-go/v3"
 )
 
 func main() {
@@ -153,7 +155,7 @@ You can set context at the time of initialization:
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/v2"
+    "github.com/featurevisor/featurevisor-go/v3"
 )
 
 f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
@@ -302,12 +304,24 @@ _ = f.GetVariableObjectInto(featureKey, variableKey, context, &cfg)
 
 `context` and `OverrideOptions` are optional and can be passed before the output pointer.
 
+## Getting global variables
+
+Global variables are independent configuration values. Go uses explicit method names because it does not support method overloading:
+
+```go
+supportEmail := f.GetGlobalVariableString("supportEmail", context)
+settings := f.GetGlobalVariableObject("checkoutSettings", context)
+evaluation := f.EvaluateGlobalVariable("supportEmail", context)
+```
+
+The complete family includes `GetGlobalVariable`, the Boolean, string, integer, double, array, object, and JSON helpers, `GetGlobalVariableKeys`, and `GetVariableEvaluations`. Global variables support sticky values, `requiredFeatures`, ordered overrides, detailed override keys and paths, and caller defaults through `OverrideOptions`.
+
 ## Getting all evaluations
 
 You can get evaluations of all features available in the SDK instance:
 
 ```go
-allEvaluations := f.GetAllEvaluations(featurevisor.Context{})
+allEvaluations := f.GetFeatureEvaluations(featurevisor.Context{}, nil, featurevisor.OverrideOptions{})
 
 fmt.Printf("%+v\n", allEvaluations)
 // {
@@ -328,21 +342,21 @@ fmt.Printf("%+v\n", allEvaluations)
 
 This is handy especially when you want to pass all evaluations from a backend application to the frontend.
 
-## Sticky
+## Sticky features and variables
 
 For the lifecycle of the SDK instance in your application, you can set some features with sticky values, meaning that they will not be evaluated against the fetched [datafile](https://featurevisor.com/docs/building-datafiles/):
 
-Sticky values belong to an SDK or child instance. Evaluation options do not accept sticky overrides; create a child with `SpawnOptions{Sticky: ...}` when a child needs its own sticky state.
+Sticky values belong to an SDK or child instance. Evaluation options do not accept sticky overrides. Child sticky maps replace parent sticky state rather than inheriting it.
 
 ### Initialize with sticky
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/v2"
+    "github.com/featurevisor/featurevisor-go/v3"
 )
 
 f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
-    Sticky: &featurevisor.StickyFeatures{
+    StickyFeatures: &featurevisor.StickyFeatures{
         "myFeatureKey": {
             Enabled: true,
             // optional
@@ -368,7 +382,7 @@ Once initialized with sticky features, the SDK will look for values there first 
 You can also set sticky features after the SDK is initialized:
 
 ```go
-f.SetSticky(featurevisor.StickyFeatures{
+f.SetStickyFeatures(featurevisor.StickyFeatures{
     "myFeatureKey": {
         Enabled: true,
         Variation: func() *featurevisor.VariationValue {
@@ -383,6 +397,10 @@ f.SetSticky(featurevisor.StickyFeatures{
         Enabled: false,
     },
 }, true) // replace existing sticky features (false by default)
+
+f.SetStickyVariables(featurevisor.StickyVariables{
+    "supportEmail": "sticky@example.com",
+}, true)
 ```
 
 ## Setting datafile
@@ -403,7 +421,7 @@ By default, `SetDatafile(datafile)` merges the incoming datafile with the SDK in
 - existing `Features` and `Segments` that are missing from the incoming datafile are kept
 - `Revision`, `SchemaVersion`, and `FeaturevisorVersion` are taken from the incoming datafile
 
-This means you can call `SetDatafile` more than once with different datafiles, and the SDK instance accumulates their features and segments together.
+This means you can call `SetDatafile` more than once with different datafiles, and the SDK instance accumulates their features, segments, and global variables together.
 
 ### Replacing
 
@@ -465,7 +483,7 @@ import (
     "io"
     "net/http"
 
-    "github.com/featurevisor/featurevisor-go/v2"
+    "github.com/featurevisor/featurevisor-go/v3"
 )
 
 func updateDatafile(f *featurevisor.Featurevisor, datafileURL string) {
@@ -552,6 +570,7 @@ unsubscribe := f.On(featurevisor.EventNameDatafileSet, func(details featurevisor
     // list of feature keys that have new updates,
     // and you should re-evaluate them
     features := details["features"]
+    variables := details["variables"]
 
     // handle here
 })
@@ -560,7 +579,7 @@ unsubscribe := f.On(featurevisor.EventNameDatafileSet, func(details featurevisor
 unsubscribe()
 ```
 
-The `features` array will contain keys of features that have either been:
+The `features` and `variables` arrays include entities changed directly or affected through segment and required feature dependencies.
 
 - added, or
 - updated, or
@@ -579,10 +598,10 @@ unsubscribe := f.On(featurevisor.EventNameContextSet, func(details featurevisor.
 })
 ```
 
-### `sticky_set`
+### `sticky_features_set`
 
 ```go
-unsubscribe := f.On(featurevisor.EventNameStickySet, func(details featurevisor.EventDetails) {
+unsubscribe := f.On(featurevisor.EventNameStickyFeaturesSet, func(details featurevisor.EventDetails) {
     replaced := details["replaced"] // true if sticky features got replaced
     features := details["features"] // list of all affected feature keys
 
@@ -646,7 +665,7 @@ If `Setup` panics, the module is not registered. Featurevisor removes subscripti
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/v2"
+    "github.com/featurevisor/featurevisor-go/v3"
 )
 
 myCustomModule := &featurevisor.FeaturevisorModule{
@@ -662,8 +681,8 @@ myCustomModule := &featurevisor.FeaturevisorModule{
         })
     },
 
-    // before evaluation
-    Before: func(options featurevisor.EvaluateOptions) featurevisor.EvaluateOptions {
+    // before a feature or global variable evaluation
+    BeforeEvaluation: func(options featurevisor.EvaluateOptions) featurevisor.EvaluateOptions {
         // update context before evaluation
         if options.Context == nil {
             options.Context = featurevisor.Context{}
@@ -672,8 +691,8 @@ myCustomModule := &featurevisor.FeaturevisorModule{
         return options
     },
 
-    // after evaluation
-    After: func(evaluation featurevisor.Evaluation, options featurevisor.EvaluateOptions) featurevisor.Evaluation {
+    // after a feature or global variable evaluation
+    AfterEvaluation: func(evaluation featurevisor.Evaluation, options featurevisor.EvaluateOptions) featurevisor.Evaluation {
         if evaluation.Reason == "error" {
             // log error
             return evaluation
@@ -699,13 +718,23 @@ myCustomModule := &featurevisor.FeaturevisorModule{
 }
 ```
 
+### `sticky_variables_set`
+
+```go
+unsubscribe := f.On(featurevisor.EventNameStickyVariablesSet, func(details featurevisor.EventDetails) {
+    variables := details["variables"]
+    replaced := details["replaced"]
+    fmt.Println(variables, replaced)
+})
+```
+
 ### Registering modules
 
 You can register modules at the time of SDK initialization:
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/v2"
+    "github.com/featurevisor/featurevisor-go/v3"
 )
 
 f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
@@ -852,15 +881,15 @@ go run cmd/main.go assess-distribution \
 The OpenFeature provider is a separate Go module, so applications that do not use OpenFeature do not receive its dependencies:
 
 ```bash
-go get github.com/featurevisor/featurevisor-go/openfeature/v2
+go get github.com/featurevisor/featurevisor-go/openfeature/v3
 ```
 
 ```go
 import (
     "context"
 
-    featurevisor "github.com/featurevisor/featurevisor-go/v2"
-    featurevisorof "github.com/featurevisor/featurevisor-go/openfeature/v2"
+    featurevisor "github.com/featurevisor/featurevisor-go/v3"
+    featurevisorof "github.com/featurevisor/featurevisor-go/openfeature/v3"
     of "github.com/open-feature/go-sdk/openfeature"
 )
 
@@ -883,9 +912,9 @@ enabled, err := client.BooleanValue(
 )
 ```
 
-Use `checkout` for a flag, `checkout:variation` for its variation, and `checkout:title` for its `title` variable. Boolean variables use the boolean resolver. Arrays, objects, and JSON variables use the object resolver.
+Use `checkout` for a flag, `checkout:variation` for its variation, `checkout:title` for a feature variable, and `variable:supportEmail` for a global variable. Boolean variables use the boolean resolver. Arrays, objects, and JSON variables use the object resolver.
 
-OpenFeature's targeting key maps to `userId` by default. `TargetingKeyField`, `KeySeparator`, and `VariationKey` can customize the mapping. The provider's separate module follows the Go version requirement of the official OpenFeature Go SDK.
+OpenFeature's targeting key maps to `userId` by default. `TargetingKeyField`, `KeySeparator`, `VariationKey`, and `GlobalVariablePrefix` can customize the mapping. The global prefix defaults to `variable` and cannot contain the separator. The provider's separate module follows the Go version requirement of the official OpenFeature Go SDK.
 
 You can also reuse an existing Featurevisor instance:
 
@@ -922,8 +951,8 @@ go test ./...
 
 ### Releasing
 
-- Tag the core SDK as `v2.x.y`.
-- Tag the provider module separately as `openfeature/v2.x.y`.
+- Tag the core SDK as `v3.x.y`.
+- Tag the provider module separately as `openfeature/v3.x.y`.
 - Run `make verify-packages` before creating either release.
 - Create the matching releases on [GitHub](https://github.com/featurevisor/featurevisor-go/releases).
 

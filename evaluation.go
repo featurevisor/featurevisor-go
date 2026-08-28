@@ -20,6 +20,7 @@ const (
 	EvaluationReasonVariableDisabled          EvaluationReason = "variable_disabled"           // feature is disabled, and variable's disabledValue is used
 	EvaluationReasonVariableOverrideVariation EvaluationReason = "variable_override_variation" // variable overridden from inside a variation
 	EvaluationReasonVariableOverrideRule      EvaluationReason = "variable_override_rule"      // variable overridden from inside a rule
+	EvaluationReasonRequiredFeaturesUnmet     EvaluationReason = "required_features_unmet"
 
 	// Common
 	EvaluationReasonNoMatch   EvaluationReason = "no_match"  // no rules matched
@@ -44,20 +45,21 @@ const (
 type Evaluation struct {
 	// Required
 	Type       EvaluationType   `json:"type"`
-	FeatureKey FeatureKey       `json:"featureKey"`
+	FeatureKey FeatureKey       `json:"featureKey,omitempty"`
 	Reason     EvaluationReason `json:"reason"`
 
 	// Common
-	BucketKey   *BucketKey        `json:"bucketKey,omitempty"`
-	BucketValue *BucketValue      `json:"bucketValue,omitempty"`
-	RuleKey     *RuleKey          `json:"ruleKey,omitempty"`
-	Error       error             `json:"error,omitempty"`
-	Enabled     *bool             `json:"enabled,omitempty"`
-	Traffic     *Traffic          `json:"traffic,omitempty"`
-	ForceIndex  *int              `json:"forceIndex,omitempty"`
-	Force       *Force            `json:"force,omitempty"`
-	Required    []Required        `json:"required,omitempty"`
-	Sticky      *EvaluatedFeature `json:"sticky,omitempty"`
+	BucketKey        *BucketKey        `json:"bucketKey,omitempty"`
+	BucketValue      *BucketValue      `json:"bucketValue,omitempty"`
+	RuleKey          *RuleKey          `json:"ruleKey,omitempty"`
+	Error            error             `json:"error,omitempty"`
+	Enabled          *bool             `json:"enabled,omitempty"`
+	Traffic          *Traffic          `json:"traffic,omitempty"`
+	ForceIndex       *int              `json:"forceIndex,omitempty"`
+	Force            *Force            `json:"force,omitempty"`
+	Required         []Required        `json:"required,omitempty"`
+	RequiredFeatures []Required        `json:"requiredFeatures,omitempty"`
+	Sticky           *EvaluatedFeature `json:"sticky,omitempty"`
 
 	// Variation
 	Variation      *Variation      `json:"variation,omitempty"`
@@ -67,5 +69,8 @@ type Evaluation struct {
 	VariableKey           *VariableKey    `json:"variableKey,omitempty"`
 	VariableValue         VariableValue   `json:"variableValue,omitempty"`
 	VariableSchema        *VariableSchema `json:"variableSchema,omitempty"`
+	GlobalVariable        *GlobalVariable `json:"globalVariable,omitempty"`
 	VariableOverrideIndex *int            `json:"variableOverrideIndex,omitempty"`
+	VariableOverrideKey   *string         `json:"variableOverrideKey,omitempty"`
+	VariableOverridePath  []string        `json:"variableOverridePath,omitempty"`
 }

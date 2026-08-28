@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	featurevisor "github.com/featurevisor/featurevisor-go/v2"
+	featurevisor "github.com/featurevisor/featurevisor-go/v3"
 	of "github.com/open-feature/go-sdk/openfeature"
 )
 
@@ -21,31 +21,37 @@ type TrackingEvent struct {
 }
 
 type Options struct {
-	Featurevisor        *featurevisor.Featurevisor
-	FeaturevisorOptions featurevisor.FeaturevisorOptions
-	TargetingKeyField   string
-	KeySeparator        string
-	VariationKey        string
-	OnTrack             func(TrackingEvent)
+	Featurevisor         *featurevisor.Featurevisor
+	FeaturevisorOptions  featurevisor.FeaturevisorOptions
+	TargetingKeyField    string
+	KeySeparator         string
+	VariationKey         string
+	GlobalVariablePrefix string
+	OnTrack              func(TrackingEvent)
 }
 
 type Provider struct {
-	featurevisor        *featurevisor.Featurevisor
-	targetingKeyField   string
-	keySeparator        string
-	variationKey        string
-	onTrack             func(TrackingEvent)
-	datafileError       string
-	datafileUnsubscribe featurevisor.Unsubscribe
-	ownsFeaturevisor    bool
+	featurevisor         *featurevisor.Featurevisor
+	targetingKeyField    string
+	keySeparator         string
+	variationKey         string
+	globalVariablePrefix string
+	onTrack              func(TrackingEvent)
+	datafileError        string
+	datafileUnsubscribe  featurevisor.Unsubscribe
+	ownsFeaturevisor     bool
 }
 
 func NewProvider(options Options) *Provider {
 	p := &Provider{
-		targetingKeyField: valueOr(options.TargetingKeyField, "userId"),
-		keySeparator:      valueOr(options.KeySeparator, ":"),
-		variationKey:      valueOr(options.VariationKey, "variation"),
-		onTrack:           options.OnTrack,
+		targetingKeyField:    valueOr(options.TargetingKeyField, "userId"),
+		keySeparator:         valueOr(options.KeySeparator, ":"),
+		variationKey:         valueOr(options.VariationKey, "variation"),
+		globalVariablePrefix: valueOr(options.GlobalVariablePrefix, "variable"),
+		onTrack:              options.OnTrack,
+	}
+	if strings.Contains(p.globalVariablePrefix, p.keySeparator) {
+		panic("globalVariablePrefix cannot contain keySeparator")
 	}
 	if options.Featurevisor != nil {
 		p.featurevisor = options.Featurevisor
@@ -150,7 +156,18 @@ func (p *Provider) resolve(flag string, defaultValue any, flatCtx of.FlattenedCo
 
 	var evaluation featurevisor.Evaluation
 	var value any
-	if selector == "" {
+	if featureKey == p.globalVariablePrefix && selector != "" {
+		evaluation = p.featurevisor.EvaluateGlobalVariable(selector, context, featurevisor.OverrideOptions{})
+		value = evaluation.VariableValue
+		if evaluation.GlobalVariable != nil && evaluation.GlobalVariable.Type == featurevisor.VariableTypeJSON {
+			if raw, ok := value.(string); ok {
+				var parsed any
+				if json.Unmarshal([]byte(raw), &parsed) == nil {
+					value = parsed
+				}
+			}
+		}
+	} else if selector == "" {
 		if expected != "boolean" {
 			return defaultValue, typeMismatch(flag, expected)
 		}
@@ -192,7 +209,10 @@ func (p *Provider) resolve(flag string, defaultValue any, flatCtx of.FlattenedCo
 }
 
 func detailFor(e featurevisor.Evaluation, fv *featurevisor.Featurevisor) of.ProviderResolutionDetail {
-	metadata := of.FlagMetadata{"featureKey": string(e.FeatureKey), "featurevisorReason": string(e.Reason), "schemaVersion": fv.GetSchemaVersion()}
+	metadata := of.FlagMetadata{"featurevisorReason": string(e.Reason), "schemaVersion": fv.GetSchemaVersion()}
+	if e.FeatureKey != "" {
+		metadata["featureKey"] = string(e.FeatureKey)
+	}
 	if revision := fv.GetRevision(); revision != "" {
 		metadata["revision"] = revision
 	}
@@ -214,6 +234,9 @@ func detailFor(e featurevisor.Evaluation, fv *featurevisor.Featurevisor) of.Prov
 	if e.VariableOverrideIndex != nil {
 		metadata["variableOverrideIndex"] = *e.VariableOverrideIndex
 	}
+	if e.VariableOverrideKey != nil {
+		metadata["variableOverrideKey"] = *e.VariableOverrideKey
+	}
 	detail := of.ProviderResolutionDetail{Reason: reasonFor(e.Reason), FlagMetadata: metadata}
 	if e.VariationValue != nil {
 		detail.Variant = string(*e.VariationValue)
@@ -224,7 +247,11 @@ func detailFor(e featurevisor.Evaluation, fv *featurevisor.Featurevisor) of.Prov
 	case featurevisor.EvaluationReasonFeatureNotFound:
 		detail.ResolutionError = of.NewFlagNotFoundResolutionError(fmt.Sprintf("Feature %q was not found", e.FeatureKey))
 	case featurevisor.EvaluationReasonVariableNotFound:
-		detail.ResolutionError = of.NewFlagNotFoundResolutionError(fmt.Sprintf("Variable %q was not found for feature %q", valueOrPointer(e.VariableKey), e.FeatureKey))
+		if e.FeatureKey == "" {
+			detail.ResolutionError = of.NewFlagNotFoundResolutionError(fmt.Sprintf("Variable %q was not found", valueOrPointer(e.VariableKey)))
+		} else {
+			detail.ResolutionError = of.NewFlagNotFoundResolutionError(fmt.Sprintf("Variable %q was not found for feature %q", valueOrPointer(e.VariableKey), e.FeatureKey))
+		}
 	case featurevisor.EvaluationReasonNoVariations:
 		detail.ResolutionError = of.NewFlagNotFoundResolutionError(fmt.Sprintf("Feature %q has no variations", e.FeatureKey))
 	case featurevisor.EvaluationReasonError:
@@ -242,6 +269,8 @@ func reasonFor(reason featurevisor.EvaluationReason) of.Reason {
 	case featurevisor.EvaluationReasonAllocated:
 		return of.SplitReason
 	case featurevisor.EvaluationReasonDisabled, featurevisor.EvaluationReasonVariationDisabled, featurevisor.EvaluationReasonVariableDisabled:
+		return of.DisabledReason
+	case featurevisor.EvaluationReasonRequiredFeaturesUnmet:
 		return of.DisabledReason
 	default:
 		return of.DefaultReason

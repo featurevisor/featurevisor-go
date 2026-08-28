@@ -33,12 +33,14 @@ type FeaturevisorModuleApi struct {
 type FeaturevisorModule struct {
 	Name string `json:"name,omitempty"`
 
-	Setup       func(api FeaturevisorModuleApi)                                 `json:"setup,omitempty"`
-	Before      func(options EvaluateOptions) EvaluateOptions                   `json:"before,omitempty"`
-	BucketKey   ConfigureBucketKey                                              `json:"bucketKey,omitempty"`
-	BucketValue ConfigureBucketValue                                            `json:"bucketValue,omitempty"`
-	After       func(evaluation Evaluation, options EvaluateOptions) Evaluation `json:"after,omitempty"`
-	Close       func()                                                          `json:"close,omitempty"`
+	Setup            func(api FeaturevisorModuleApi)                                 `json:"setup,omitempty"`
+	Before           func(options EvaluateOptions) EvaluateOptions                   `json:"before,omitempty"`
+	BeforeEvaluation func(options EvaluateOptions) EvaluateOptions                   `json:"beforeEvaluation,omitempty"`
+	BucketKey        ConfigureBucketKey                                              `json:"bucketKey,omitempty"`
+	BucketValue      ConfigureBucketValue                                            `json:"bucketValue,omitempty"`
+	After            func(evaluation Evaluation, options EvaluateOptions) Evaluation `json:"after,omitempty"`
+	AfterEvaluation  func(evaluation Evaluation, options EvaluateOptions) Evaluation `json:"afterEvaluation,omitempty"`
+	Close            func()                                                          `json:"close,omitempty"`
 }
 
 func getModuleName(module *FeaturevisorModule) string {
