@@ -4,9 +4,10 @@ import "fmt"
 
 // childOptions contains options for creating a child instance
 type childOptions struct {
-	Parent  *Featurevisor
-	Context Context
-	Sticky  *StickyFeatures
+	Parent          *Featurevisor
+	Context         Context
+	Sticky          *StickyFeatures
+	StickyVariables *StickyVariables
 }
 
 type childParentSubscription struct {
@@ -19,6 +20,7 @@ type FeaturevisorChild struct {
 	parent              *Featurevisor
 	context             Context
 	sticky              *StickyFeatures
+	stickyVariables     *StickyVariables
 	emitter             *emitter
 	parentSubscriptions []childParentSubscription
 	nextSubscriptionID  uint64
@@ -27,16 +29,17 @@ type FeaturevisorChild struct {
 // newFeaturevisorChild creates a new child instance.
 func newFeaturevisorChild(options childOptions) *FeaturevisorChild {
 	return &FeaturevisorChild{
-		parent:  options.Parent,
-		context: options.Context,
-		sticky:  options.Sticky,
-		emitter: newEmitter(),
+		parent:          options.Parent,
+		context:         options.Context,
+		sticky:          options.Sticky,
+		stickyVariables: options.StickyVariables,
+		emitter:         newEmitter(),
 	}
 }
 
 // On adds an event listener
 func (c *FeaturevisorChild) On(eventName EventName, callback EventCallback) Unsubscribe {
-	if eventName == EventNameContextSet || eventName == EventNameStickySet {
+	if eventName == EventNameContextSet || eventName == EventNameStickyFeaturesSet || eventName == EventNameStickyVariablesSet {
 		return c.emitter.On(eventName, callback)
 	}
 
@@ -63,6 +66,46 @@ func (c *FeaturevisorChild) On(eventName EventName, callback EventCallback) Unsu
 		unsubscribe: unsubscribe,
 	})
 	return unsubscribe
+}
+
+// SetStickyFeatures sets sticky feature evaluations on the child.
+func (c *FeaturevisorChild) SetStickyFeatures(sticky StickyFeatures, replace ...bool) {
+	replaceValue := len(replace) > 0 && replace[0]
+	previousStickyFeatures := StickyFeatures{}
+	if c.sticky != nil {
+		previousStickyFeatures = *c.sticky
+	}
+	if replaceValue {
+		c.sticky = &sticky
+	} else {
+		newSticky := StickyFeatures{}
+		if c.sticky != nil {
+			for key, value := range *c.sticky {
+				newSticky[key] = value
+			}
+		}
+		for key, value := range sticky {
+			newSticky[key] = value
+		}
+		c.sticky = &newSticky
+	}
+	c.emitter.Trigger(EventNameStickyFeaturesSet, EventDetails(getParamsForStickyFeaturesSetEvent(previousStickyFeatures, *c.sticky, replaceValue)))
+}
+
+// SetStickyVariables sets sticky global variable values on the child.
+func (c *FeaturevisorChild) SetStickyVariables(sticky StickyVariables, replace ...bool) {
+	replaceValue := len(replace) > 0 && replace[0]
+	next := StickyVariables{}
+	if !replaceValue && c.stickyVariables != nil {
+		for key, value := range *c.stickyVariables {
+			next[key] = value
+		}
+	}
+	for key, value := range sticky {
+		next[key] = value
+	}
+	c.stickyVariables = &next
+	c.emitter.Trigger(EventNameStickyVariablesSet, EventDetails{"variables": mapKeys(next), "replaced": replaceValue})
 }
 
 // Close closes child instance listeners
@@ -109,37 +152,6 @@ func (c *FeaturevisorChild) GetContext(context Context) Context {
 	return c.parent.GetContext(merged)
 }
 
-// SetSticky sets sticky features
-func (c *FeaturevisorChild) SetSticky(sticky StickyFeatures, replace ...bool) {
-	replaceValue := false
-	if len(replace) > 0 {
-		replaceValue = replace[0]
-	}
-
-	previousStickyFeatures := StickyFeatures{}
-	if c.sticky != nil {
-		previousStickyFeatures = *c.sticky
-	}
-
-	if replaceValue {
-		c.sticky = &sticky
-	} else {
-		newSticky := StickyFeatures{}
-		if c.sticky != nil {
-			newSticky = *c.sticky
-		}
-		// Merge sticky features
-		for key, value := range sticky {
-			newSticky[key] = value
-		}
-		c.sticky = &newSticky
-	}
-
-	params := getParamsForStickySetEvent(previousStickyFeatures, *c.sticky, replaceValue)
-
-	c.emitter.Trigger(EventNameStickySet, EventDetails(params))
-}
-
 // getEvaluationDependencies gets evaluation dependencies
 func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options OverrideOptions) evaluateDependencies {
 	var sticky *StickyFeatures
@@ -155,10 +167,123 @@ func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options O
 		modulesManager:                 c.parent.modulesManager,
 		instanceEvaluationDataProvider: c.parent.instanceEvaluationDataProvider,
 		sticky:                         sticky,
-		DefaultVariationValue:          options.DefaultVariationValue,
-		DefaultVariableValue:           options.DefaultVariableValue,
-		DefaultVariableValueSet:        options.DefaultVariableValueSet,
+		stickyVariables: func() *StickyVariables {
+			if options.stickyVariables != nil {
+				return options.stickyVariables
+			}
+			return c.stickyVariables
+		}(),
+		DefaultVariationValue:   options.DefaultVariationValue,
+		DefaultVariableValue:    options.DefaultVariableValue,
+		DefaultVariableValueSet: options.DefaultVariableValueSet,
 	}
+}
+
+func mapKeys(values StickyVariables) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// EvaluateGlobalVariable evaluates an independently defined variable on the child.
+func (c *FeaturevisorChild) EvaluateGlobalVariable(variableKey string, args ...interface{}) Evaluation {
+	context, options := parseEvaluationArgs(args)
+	key := VariableKey(variableKey)
+	return evaluateWithModules(EvaluateOptions{evaluateParams: evaluateParams{Type: EvaluationTypeVariable, VariableKey: &key, GlobalVariable: true}, evaluateDependencies: c.getEvaluationDependencies(context, options)})
+}
+
+// GetGlobalVariable gets an independently defined variable on the child.
+func (c *FeaturevisorChild) GetGlobalVariable(variableKey string, args ...interface{}) VariableValue {
+	return getGlobalVariableValue(c.EvaluateGlobalVariable(variableKey, args...))
+}
+
+func (c *FeaturevisorChild) GetGlobalVariableBoolean(variableKey string, args ...interface{}) *bool {
+	value, ok := c.GetGlobalVariable(variableKey, args...).(bool)
+	if !ok {
+		return nil
+	}
+	return &value
+}
+func (c *FeaturevisorChild) GetGlobalVariableString(variableKey string, args ...interface{}) *string {
+	value, ok := c.GetGlobalVariable(variableKey, args...).(string)
+	if !ok {
+		return nil
+	}
+	return &value
+}
+func (c *FeaturevisorChild) GetGlobalVariableInteger(variableKey string, args ...interface{}) *int {
+	value := c.GetGlobalVariable(variableKey, args...)
+	if number, ok := value.(float64); ok {
+		result := int(number)
+		return &result
+	}
+	if number, ok := value.(int); ok {
+		return &number
+	}
+	return nil
+}
+func (c *FeaturevisorChild) GetGlobalVariableDouble(variableKey string, args ...interface{}) *float64 {
+	value, ok := c.GetGlobalVariable(variableKey, args...).(float64)
+	if !ok {
+		return nil
+	}
+	return &value
+}
+func (c *FeaturevisorChild) GetGlobalVariableArray(variableKey string, args ...interface{}) []string {
+	value := c.GetGlobalVariable(variableKey, args...)
+	if result, ok := value.([]string); ok {
+		return result
+	}
+	if values, ok := value.([]interface{}); ok {
+		result := make([]string, 0, len(values))
+		for _, item := range values {
+			if text, ok := item.(string); ok {
+				result = append(result, text)
+			}
+		}
+		return result
+	}
+	return nil
+}
+func (c *FeaturevisorChild) GetGlobalVariableObject(variableKey string, args ...interface{}) map[string]interface{} {
+	value, _ := c.GetGlobalVariable(variableKey, args...).(map[string]interface{})
+	return value
+}
+func (c *FeaturevisorChild) GetGlobalVariableJSON(variableKey string, args ...interface{}) interface{} {
+	return c.GetGlobalVariable(variableKey, args...)
+}
+
+// GetGlobalVariableArrayInto decodes an array global variable into out.
+func (c *FeaturevisorChild) GetGlobalVariableArrayInto(variableKey string, args ...interface{}) error {
+	context, options, out, err := parseVariableIntoArgs(args...)
+	if err != nil {
+		return err
+	}
+	value := c.GetGlobalVariable(variableKey, context, options)
+	if value == nil {
+		return fmt.Errorf("global variable %q is unavailable", variableKey)
+	}
+	return decodeInto(value, out)
+}
+
+// GetGlobalVariableObjectInto decodes an object global variable into out.
+func (c *FeaturevisorChild) GetGlobalVariableObjectInto(variableKey string, args ...interface{}) error {
+	return c.GetGlobalVariableArrayInto(variableKey, args...)
+}
+
+// GetVariableEvaluations evaluates a global variable snapshot on the child.
+func (c *FeaturevisorChild) GetVariableEvaluations(context Context, variableKeys []string, options OverrideOptions) EvaluatedVariables {
+	result := EvaluatedVariables{}
+	keys := variableKeys
+	if len(keys) == 0 {
+		keys = c.parent.GetGlobalVariableKeys()
+	}
+	for _, key := range keys {
+		result[key] = c.GetGlobalVariable(key, context, options)
+	}
+	return result
 }
 
 func (c *FeaturevisorChild) evaluateFlag(featureKey string, context Context, options OverrideOptions) Evaluation {
@@ -488,8 +613,8 @@ func (c *FeaturevisorChild) GetVariableObjectInto(featureKey string, variableKey
 	return decodeInto(objectValue, out)
 }
 
-// GetAllEvaluations gets all evaluations for features
-func (c *FeaturevisorChild) GetAllEvaluations(context Context, featureKeys []string, options OverrideOptions) EvaluatedFeatures {
+// GetFeatureEvaluations evaluates a feature snapshot on the child.
+func (c *FeaturevisorChild) GetFeatureEvaluations(context Context, featureKeys []string, options OverrideOptions) EvaluatedFeatures {
 	result := EvaluatedFeatures{}
 
 	keys := featureKeys

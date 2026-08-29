@@ -777,7 +777,7 @@ func TestSetDatafileMergesByDefaultAndReplacesWhenRequested(t *testing.T) {
 	}
 }
 
-func TestGetAllEvaluations(t *testing.T) {
+func TestGetFeatureEvaluations(t *testing.T) {
 	jsonDatafile := `{
 		"schemaVersion": "2",
 		"revision": "1.0",
@@ -876,9 +876,9 @@ func TestGetAllEvaluations(t *testing.T) {
 
 	context := Context{"userId": "123"}
 
-	// Test GetAllEvaluations with specific feature keys
+	// Test GetFeatureEvaluations with specific feature keys
 	featureKeys := []string{"test", "anotherTest"}
-	evaluatedFeatures := instance.GetAllEvaluations(context, featureKeys, OverrideOptions{})
+	evaluatedFeatures := instance.GetFeatureEvaluations(context, featureKeys, OverrideOptions{})
 
 	// Validate test feature evaluation
 	testFeature, exists := evaluatedFeatures["test"]
@@ -985,8 +985,8 @@ func TestGetAllEvaluations(t *testing.T) {
 		t.Errorf("Expected 'anotherTest' feature to not have variables, got '%v'", anotherTestFeature.Variables)
 	}
 
-	// Test GetAllEvaluations with empty feature keys (should return all features)
-	allEvaluatedFeatures := instance.GetAllEvaluations(context, []string{}, OverrideOptions{})
+	// Test GetFeatureEvaluations with empty feature keys (should return all features)
+	allEvaluatedFeatures := instance.GetFeatureEvaluations(context, []string{}, OverrideOptions{})
 
 	// Should contain both features
 	if _, exists := allEvaluatedFeatures["test"]; !exists {
@@ -998,7 +998,7 @@ func TestGetAllEvaluations(t *testing.T) {
 	}
 
 	// Test with non-existent feature keys
-	nonExistentFeatures := instance.GetAllEvaluations(context, []string{"nonExistent"}, OverrideOptions{})
+	nonExistentFeatures := instance.GetFeatureEvaluations(context, []string{"nonExistent"}, OverrideOptions{})
 	if len(nonExistentFeatures) != 1 {
 		t.Errorf("Expected 1 feature for non-existent key, got %d features", len(nonExistentFeatures))
 	}
@@ -1027,7 +1027,7 @@ func TestLifecycleMutationsReportDiagnostics(t *testing.T) {
 		Segments:      map[SegmentKey]Segment{},
 		Features:      map[FeatureKey]Feature{},
 	})
-	instance.SetSticky(StickyFeatures{"test": EvaluatedFeature{Enabled: true}})
+	instance.SetStickyFeatures(StickyFeatures{"test": EvaluatedFeature{Enabled: true}})
 	instance.SetContext(Context{"country": "nl"})
 
 	codes := map[string]bool{}
@@ -1035,7 +1035,7 @@ func TestLifecycleMutationsReportDiagnostics(t *testing.T) {
 		codes[diagnostic.Code] = true
 	}
 
-	for _, code := range []string{"datafile_set", "sticky_set", "context_set"} {
+	for _, code := range []string{"datafile_set", "sticky_features_set", "context_set"} {
 		if !codes[code] {
 			t.Fatalf("expected %s diagnostic, got %#v", code, diagnostics)
 		}

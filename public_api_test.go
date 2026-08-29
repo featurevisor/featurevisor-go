@@ -3,7 +3,7 @@ package featurevisor_test
 import (
 	"testing"
 
-	featurevisor "github.com/featurevisor/featurevisor-go/v2"
+	featurevisor "github.com/featurevisor/featurevisor-go/v3"
 )
 
 func TestPublicAPIContractsCompileForExternalConsumers(t *testing.T) {

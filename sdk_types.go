@@ -139,11 +139,12 @@ type Context map[string]interface{}
  */
 // DatafileContent represents the content of a datafile
 type DatafileContent struct {
-	SchemaVersion       string                 `json:"schemaVersion"`
-	Revision            string                 `json:"revision"`
-	FeaturevisorVersion string                 `json:"featurevisorVersion,omitempty"`
-	Segments            map[SegmentKey]Segment `json:"segments"`
-	Features            map[FeatureKey]Feature `json:"features"`
+	SchemaVersion       string                               `json:"schemaVersion"`
+	Revision            string                               `json:"revision"`
+	FeaturevisorVersion string                               `json:"featurevisorVersion,omitempty"`
+	Segments            map[SegmentKey]Segment               `json:"segments"`
+	Features            map[FeatureKey]Feature               `json:"features"`
+	Variables           map[GlobalVariableKey]GlobalVariable `json:"variables,omitempty"`
 }
 
 // FromJSON parses a JSON string and returns a DatafileContent
@@ -172,6 +173,7 @@ type Feature struct {
 	Hash                   *string                        `json:"hash,omitempty"`
 	Deprecated             *bool                          `json:"deprecated,omitempty"`
 	Required               []Required                     `json:"required,omitempty"`
+	RequiredFeatures       []Required                     `json:"requiredFeatures,omitempty"`
 	VariablesSchema        map[VariableKey]VariableSchema `json:"variablesSchema,omitempty"`
 	DisabledVariationValue *VariationValue                `json:"disabledVariationValue,omitempty"`
 	Variations             []Variation                    `json:"variations,omitempty"`
@@ -211,10 +213,23 @@ type EvaluatedFeatures map[FeatureKey]EvaluatedFeature
 // StickyFeatures represents sticky features
 type StickyFeatures = EvaluatedFeatures
 
+// StickyVariables stores sticky values for global variables.
+type StickyVariables map[GlobalVariableKey]VariableValue
+
+// EvaluatedVariables stores evaluated global variable values.
+type EvaluatedVariables map[GlobalVariableKey]VariableValue
+
 // RequiredWithVariation represents a required feature with variation
 type RequiredWithVariation struct {
 	Key       FeatureKey     `json:"key"`
 	Variation VariationValue `json:"variation"`
+}
+
+// RequiredFeature describes the canonical requiredFeatures object form.
+type RequiredFeature struct {
+	Feature   FeatureKey      `json:"feature"`
+	Enabled   *bool           `json:"enabled,omitempty"`
+	Variation *VariationValue `json:"variation,omitempty"`
 }
 
 // Required represents a required feature
@@ -335,6 +350,9 @@ type Traffic struct {
 // VariableKey represents the key of a variable
 type VariableKey = string
 
+// GlobalVariableKey represents an independently evaluated variable key.
+type GlobalVariableKey = string
+
 // VariableType represents the type of a variable
 type VariableType string
 
@@ -395,9 +413,42 @@ type VariableOverrideConditions struct {
 
 // VariableOverride represents a variable override
 type VariableOverride struct {
-	Value      VariableValue `json:"value"`
-	Conditions interface{}   `json:"conditions,omitempty"` // Condition | Condition[]
-	Segments   interface{}   `json:"segments,omitempty"`   // GroupSegment | GroupSegment[]
+	Key              *string       `json:"key,omitempty"`
+	KeyPath          []string      `json:"keyPath,omitempty"`
+	Value            VariableValue `json:"value"`
+	Conditions       interface{}   `json:"conditions,omitempty"` // Condition | Condition[]
+	Segments         interface{}   `json:"segments,omitempty"`   // GroupSegment | GroupSegment[]
+	RequiredFeatures []Required    `json:"requiredFeatures,omitempty"`
+}
+
+// GlobalVariable represents an independently evaluated variable in a datafile.
+type GlobalVariable struct {
+	Hash                   *string            `json:"hash,omitempty"`
+	Deprecated             *bool              `json:"deprecated,omitempty"`
+	Type                   VariableType       `json:"type,omitempty"`
+	DefaultValue           VariableValue      `json:"defaultValue"`
+	DisabledValue          VariableValue      `json:"disabledValue,omitempty"`
+	UseDefaultWhenDisabled bool               `json:"useDefaultWhenDisabled,omitempty"`
+	RequiredFeatures       []Required         `json:"requiredFeatures,omitempty"`
+	Overrides              []VariableOverride `json:"overrides,omitempty"`
+	defaultValueSet        bool
+	disabledValueSet       bool
+}
+
+func (variable *GlobalVariable) UnmarshalJSON(data []byte) error {
+	type alias GlobalVariable
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*variable = GlobalVariable(decoded)
+	_, variable.defaultValueSet = fields["defaultValue"]
+	_, variable.disabledValueSet = fields["disabledValue"]
+	return nil
 }
 
 // VariableSchema represents the schema of a variable
@@ -425,6 +476,24 @@ type VariableSchema struct {
 	Description            *string        `json:"description,omitempty"`
 	UseDefaultWhenDisabled *bool          `json:"useDefaultWhenDisabled,omitempty"`
 	DisabledValue          *VariableValue `json:"disabledValue,omitempty"`
+	defaultValueSet        bool
+	disabledValueSet       bool
+}
+
+func (schema *VariableSchema) UnmarshalJSON(data []byte) error {
+	type alias VariableSchema
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*schema = VariableSchema(decoded)
+	_, schema.defaultValueSet = fields["defaultValue"]
+	_, schema.disabledValueSet = fields["disabledValue"]
+	return nil
 }
 
 /**

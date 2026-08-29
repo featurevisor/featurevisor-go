@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// instanceEvaluationDataProviderOptions contains options for creating a datafile reader
+// instanceEvaluationDataProviderOptions contains options for creating an evaluation data provider.
 type instanceEvaluationDataProviderOptions struct {
 	Datafile           DatafileContent
 	diagnosticReporter *diagnosticReporter
@@ -26,18 +26,20 @@ type instanceEvaluationDataProvider struct {
 	revision      string
 	segments      map[SegmentKey]Segment
 	features      map[FeatureKey]Feature
+	variables     map[GlobalVariableKey]GlobalVariable
 	diagnostics   *diagnosticReporter
 	regexCache    map[string]*regexp.Regexp
 	regexCacheMu  sync.RWMutex
 }
 
-// newInstanceEvaluationDataProvider creates a new datafile reader instance
+// newInstanceEvaluationDataProvider creates an evaluation data provider.
 func newInstanceEvaluationDataProvider(options instanceEvaluationDataProviderOptions) *instanceEvaluationDataProvider {
 	return &instanceEvaluationDataProvider{
 		schemaVersion: options.Datafile.SchemaVersion,
 		revision:      options.Datafile.Revision,
 		segments:      options.Datafile.Segments,
 		features:      options.Datafile.Features,
+		variables:     options.Datafile.Variables,
 		diagnostics:   options.diagnosticReporter,
 		regexCache:    make(map[string]*regexp.Regexp),
 	}
@@ -45,7 +47,7 @@ func newInstanceEvaluationDataProvider(options instanceEvaluationDataProviderOpt
 
 // AllConditionsAreMatched checks whether a condition tree matches the given context.
 // It mirrors the JavaScript SDK's narrow root helper export without exposing the
-// internal datafile reader implementation.
+// internal evaluation data provider implementation.
 func AllConditionsAreMatched(conditions Condition, context Context) bool {
 	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
 		Datafile: DatafileContent{
@@ -103,8 +105,33 @@ func (d *instanceEvaluationDataProvider) GetFeature(featureKey FeatureKey) *Feat
 	if feature.Required != nil {
 		feature.Required = d.parseRequiredIfStringified(feature.Required)
 	}
+	if feature.RequiredFeatures != nil {
+		feature.RequiredFeatures = d.parseRequiredIfStringified(feature.RequiredFeatures)
+	}
 
 	return &feature
+}
+
+// GetGlobalVariableKeys returns all independently evaluated variable keys.
+func (d *instanceEvaluationDataProvider) GetGlobalVariableKeys() []string {
+	keys := make([]string, 0, len(d.variables))
+	for key := range d.variables {
+		keys = append(keys, string(key))
+	}
+	return keys
+}
+
+// GetGlobalVariable returns an independently evaluated variable definition.
+func (d *instanceEvaluationDataProvider) GetGlobalVariable(variableKey GlobalVariableKey) *GlobalVariable {
+	variable, exists := d.variables[variableKey]
+	if !exists {
+		return nil
+	}
+	variable.RequiredFeatures = d.parseRequiredIfStringified(variable.RequiredFeatures)
+	for index := range variable.Overrides {
+		variable.Overrides[index].RequiredFeatures = d.parseRequiredIfStringified(variable.Overrides[index].RequiredFeatures)
+	}
+	return &variable
 }
 
 // GetVariableKeys returns the variable keys for a feature
@@ -576,8 +603,20 @@ func (d *instanceEvaluationDataProvider) parseRequiredIfStringified(required []R
 			continue
 		}
 
-		// If it's a map, try to parse it as RequiredWithVariation
+		// If it is a map, parse either the canonical or legacy object form.
 		if reqMap, ok := req.(map[string]interface{}); ok {
+			if feature, exists := reqMap["feature"].(string); exists {
+				parsed := RequiredFeature{Feature: FeatureKey(feature)}
+				if enabled, ok := reqMap["enabled"].(bool); ok {
+					parsed.Enabled = &enabled
+				}
+				if variation, ok := reqMap["variation"].(string); ok {
+					value := VariationValue(variation)
+					parsed.Variation = &value
+				}
+				parsedRequired[i] = parsed
+				continue
+			}
 			if key, exists := reqMap["key"]; exists {
 				if variation, exists := reqMap["variation"]; exists {
 					// Convert to RequiredWithVariation
@@ -592,6 +631,10 @@ func (d *instanceEvaluationDataProvider) parseRequiredIfStringified(required []R
 
 		// If it's already a RequiredWithVariation, keep it as is
 		if _, ok := req.(RequiredWithVariation); ok {
+			parsedRequired[i] = req
+			continue
+		}
+		if _, ok := req.(RequiredFeature); ok {
 			parsedRequired[i] = req
 			continue
 		}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	featurevisor "github.com/featurevisor/featurevisor-go/v2"
+	featurevisor "github.com/featurevisor/featurevisor-go/v3"
 	of "github.com/open-feature/go-sdk/openfeature"
 )
 
@@ -27,7 +27,8 @@ const testDatafile = `{
       "traffic":[{"key":"all","segments":"*","percentage":100000,"variation":"on"}]
     },
     "empty":{"bucketBy":"userId","variations":[],"traffic":[{"key":"all","segments":"*","percentage":100000,"allocation":[]}]}
-  }
+  },
+  "variables":{"supportEmail":{"type":"string","defaultValue":"support@example.com"},"settings":{"type":"object","defaultValue":{"enabled":true}}}
 }`
 
 func newTestProvider(options ...func(*Options)) *Provider {
@@ -68,6 +69,15 @@ func TestProviderResolvesEveryType(t *testing.T) {
 	}
 	if result := p.ObjectEvaluation(context.Background(), "checkout:json", map[string]any{}, ctx); result.Value.(map[string]any)["nested"] != true {
 		t.Fatalf("unexpected json: %#v", result)
+	}
+	if result := p.StringEvaluation(context.Background(), "variable:supportEmail", "fallback", ctx); result.Value != "support@example.com" || result.FlagMetadata["featureKey"] != nil {
+		t.Fatalf("unexpected global string: %#v", result)
+	}
+	if result := p.ObjectEvaluation(context.Background(), "variable:settings", map[string]any{}, ctx); result.Value.(map[string]any)["enabled"] != true {
+		t.Fatalf("unexpected global object: %#v", result)
+	}
+	if result := p.StringEvaluation(context.Background(), "checkout:variable", "fallback", ctx); result.ResolutionDetail().ErrorCode != of.FlagNotFoundCode {
+		t.Fatalf("feature variable selector collided with global prefix: %#v", result)
 	}
 }
 

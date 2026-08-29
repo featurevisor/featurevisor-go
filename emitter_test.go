@@ -9,7 +9,7 @@ func TestEventNames(t *testing.T) {
 	eventNames := []EventName{
 		EventNameDatafileSet,
 		EventNameContextSet,
-		EventNameStickySet,
+		EventNameStickyFeaturesSet,
 		EventNameError,
 	}
 
@@ -127,10 +127,10 @@ func TestEmitterMultipleListeners(t *testing.T) {
 		callback2Called = true
 	}
 
-	emitter.On(EventNameStickySet, callback1)
-	emitter.On(EventNameStickySet, callback2)
+	emitter.On(EventNameStickyFeaturesSet, callback1)
+	emitter.On(EventNameStickyFeaturesSet, callback2)
 
-	emitter.Trigger(EventNameStickySet, EventDetails{"test": "value"})
+	emitter.Trigger(EventNameStickyFeaturesSet, EventDetails{"test": "value"})
 
 	if !callback1Called {
 		t.Error("First callback should have been called")
@@ -140,8 +140,8 @@ func TestEmitterMultipleListeners(t *testing.T) {
 		t.Error("Second callback should have been called")
 	}
 
-	if emitter.GetListenerCount(EventNameStickySet) != 2 {
-		t.Errorf("Expected 2 listeners, got %d", emitter.GetListenerCount(EventNameStickySet))
+	if emitter.GetListenerCount(EventNameStickyFeaturesSet) != 2 {
+		t.Errorf("Expected 2 listeners, got %d", emitter.GetListenerCount(EventNameStickyFeaturesSet))
 	}
 }
 
@@ -150,16 +150,16 @@ func TestEmitterTriggerUsesListenerSnapshot(t *testing.T) {
 	calls := []string{}
 	var unsubscribeSecond Unsubscribe
 
-	emitter.On(EventNameStickySet, func(details EventDetails) {
+	emitter.On(EventNameStickyFeaturesSet, func(details EventDetails) {
 		calls = append(calls, "first")
 		unsubscribeSecond()
 	})
-	unsubscribeSecond = emitter.On(EventNameStickySet, func(details EventDetails) {
+	unsubscribeSecond = emitter.On(EventNameStickyFeaturesSet, func(details EventDetails) {
 		calls = append(calls, "second")
 	})
 
-	emitter.Trigger(EventNameStickySet, nil)
-	emitter.Trigger(EventNameStickySet, nil)
+	emitter.Trigger(EventNameStickyFeaturesSet, nil)
+	emitter.Trigger(EventNameStickyFeaturesSet, nil)
 
 	expected := []string{"first", "second", "first"}
 	if len(calls) != len(expected) {
@@ -418,7 +418,7 @@ func TestEmitterOriginalSpec(t *testing.T) {
 	}
 
 	// Trigger unsubscribed event
-	emitter.Trigger(EventNameStickySet, EventDetails{"key": "value2"})
+	emitter.Trigger(EventNameStickyFeaturesSet, EventDetails{"key": "value2"})
 	if len(handledDetails) != 1 {
 		t.Errorf("Expected still 1 handled detail after triggering unsubscribed event, got %d", len(handledDetails))
 	}
@@ -437,8 +437,8 @@ func TestEmitterOriginalSpec(t *testing.T) {
 	if emitter.GetListenerCount(EventNameContextSet) != 0 {
 		t.Errorf("Expected 0 listeners for context_set after ClearAll, got %d", emitter.GetListenerCount(EventNameContextSet))
 	}
-	if emitter.GetListenerCount(EventNameStickySet) != 0 {
-		t.Errorf("Expected 0 listeners for sticky_set after ClearAll, got %d", emitter.GetListenerCount(EventNameStickySet))
+	if emitter.GetListenerCount(EventNameStickyFeaturesSet) != 0 {
+		t.Errorf("Expected 0 listeners for sticky_features_set after ClearAll, got %d", emitter.GetListenerCount(EventNameStickyFeaturesSet))
 	}
 }
 

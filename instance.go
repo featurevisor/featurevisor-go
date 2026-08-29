@@ -7,7 +7,8 @@ import (
 
 // OverrideOptions contains options for overriding evaluation
 type OverrideOptions struct {
-	sticky *StickyFeatures
+	sticky          *StickyFeatures
+	stickyVariables *StickyVariables
 
 	DefaultVariationValue   *VariationValue
 	DefaultVariableValue    VariableValue
@@ -16,17 +17,19 @@ type OverrideOptions struct {
 
 // SpawnOptions configures a child SDK instance.
 type SpawnOptions struct {
-	Sticky *StickyFeatures
+	StickyFeatures  *StickyFeatures
+	StickyVariables *StickyVariables
 }
 
 // FeaturevisorOptions contains options for creating an instance.
 type FeaturevisorOptions struct {
-	Datafile     interface{} // DatafileContent | string
-	Context      Context
-	LogLevel     *LogLevel
-	OnDiagnostic FeaturevisorDiagnosticHandler
-	Sticky       *StickyFeatures
-	Modules      []*FeaturevisorModule
+	Datafile        interface{} // DatafileContent | string
+	Context         Context
+	LogLevel        *LogLevel
+	OnDiagnostic    FeaturevisorDiagnosticHandler
+	StickyFeatures  *StickyFeatures
+	StickyVariables *StickyVariables
+	Modules         []*FeaturevisorModule
 }
 
 type moduleDiagnosticSubscription struct {
@@ -39,11 +42,12 @@ type moduleDiagnosticSubscription struct {
 // Featurevisor represents a Featurevisor SDK instance
 type Featurevisor struct {
 	// from options
-	context      Context
-	diagnostics  *diagnosticReporter
-	logLevel     LogLevel
-	onDiagnostic FeaturevisorDiagnosticHandler
-	sticky       *StickyFeatures
+	context         Context
+	diagnostics     *diagnosticReporter
+	logLevel        LogLevel
+	onDiagnostic    FeaturevisorDiagnosticHandler
+	sticky          *StickyFeatures
+	stickyVariables *StickyVariables
 
 	// internally created
 	datafile                       DatafileContent
@@ -149,6 +153,7 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 		Revision:      "unknown",
 		Segments:      make(map[SegmentKey]Segment),
 		Features:      make(map[FeatureKey]Feature),
+		Variables:     make(map[GlobalVariableKey]GlobalVariable),
 	}
 
 	instanceEvaluationDataProvider := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
@@ -164,7 +169,8 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 		emitter:                        emitter,
 		datafile:                       emptyDatafile,
 		instanceEvaluationDataProvider: instanceEvaluationDataProvider,
-		sticky:                         options.Sticky,
+		sticky:                         options.StickyFeatures,
+		stickyVariables:                options.StickyVariables,
 	}
 
 	instance.modulesManager = newModulesManager(modulesManagerOptions{
@@ -239,8 +245,8 @@ func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
 	i.emitter.Trigger(EventNameDatafileSet, EventDetails(details))
 }
 
-// SetSticky sets sticky features
-func (i *Featurevisor) SetSticky(sticky StickyFeatures, replace ...bool) {
+// SetStickyFeatures sets sticky feature evaluations.
+func (i *Featurevisor) SetStickyFeatures(sticky StickyFeatures, replace ...bool) {
 	if i.closed {
 		return
 	}
@@ -269,15 +275,56 @@ func (i *Featurevisor) SetSticky(sticky StickyFeatures, replace ...bool) {
 		i.sticky = &newSticky
 	}
 
-	params := getParamsForStickySetEvent(previousStickyFeatures, *i.sticky, replaceValue)
+	params := getParamsForStickyFeaturesSetEvent(previousStickyFeatures, *i.sticky, replaceValue)
 
 	i.reportDiagnostic(FeaturevisorDiagnostic{
 		Level:   LogLevelInfo,
-		Code:    "sticky_set",
+		Code:    "sticky_features_set",
 		Message: "Sticky features set",
 		Details: params,
 	}, nil)
-	i.emitter.Trigger(EventNameStickySet, EventDetails(params))
+	i.emitter.Trigger(EventNameStickyFeaturesSet, EventDetails(params))
+}
+
+// SetStickyVariables sets sticky global variable values.
+func (i *Featurevisor) SetStickyVariables(sticky StickyVariables, replace ...bool) {
+	if i.closed {
+		return
+	}
+	replaceValue := len(replace) > 0 && replace[0]
+	previous := StickyVariables{}
+	if i.stickyVariables != nil {
+		for key, value := range *i.stickyVariables {
+			previous[key] = value
+		}
+	}
+	next := StickyVariables{}
+	if !replaceValue {
+		for key, value := range previous {
+			next[key] = value
+		}
+	}
+	for key, value := range sticky {
+		next[key] = value
+	}
+	i.stickyVariables = &next
+	keys := make([]string, 0, len(previous)+len(next))
+	seen := map[string]bool{}
+	for key := range previous {
+		if !seen[key] {
+			keys = append(keys, key)
+			seen[key] = true
+		}
+	}
+	for key := range next {
+		if !seen[key] {
+			keys = append(keys, key)
+			seen[key] = true
+		}
+	}
+	details := logDetails{"variables": keys, "replaced": replaceValue}
+	i.reportDiagnostic(FeaturevisorDiagnostic{Level: LogLevelInfo, Code: "sticky_variables_set", Message: "Sticky variables set", Details: details}, nil)
+	i.emitter.Trigger(EventNameStickyVariablesSet, EventDetails(details))
 }
 
 // GetRevision returns the revision
@@ -299,6 +346,11 @@ func (i *Featurevisor) GetFeatureKeys() []string {
 
 func (i *Featurevisor) GetVariableKeys(featureKey string) []string {
 	return i.instanceEvaluationDataProvider.GetVariableKeys(FeatureKey(featureKey))
+}
+
+// GetGlobalVariableKeys returns all global variable keys.
+func (i *Featurevisor) GetGlobalVariableKeys() []string {
+	return i.instanceEvaluationDataProvider.GetGlobalVariableKeys()
 }
 
 func (i *Featurevisor) HasVariations(featureKey string) bool {
@@ -542,9 +594,10 @@ func (i *Featurevisor) Spawn(args ...interface{}) *FeaturevisorChild {
 	}
 
 	return newFeaturevisorChild(childOptions{
-		Parent:  i,
-		Context: i.GetContext(contextValue),
-		Sticky:  optionsValue.Sticky,
+		Parent:          i,
+		Context:         i.GetContext(contextValue),
+		Sticky:          optionsValue.StickyFeatures,
+		StickyVariables: optionsValue.StickyVariables,
 	})
 }
 
@@ -563,10 +616,123 @@ func (i *Featurevisor) getEvaluationDependencies(context Context, options Overri
 		modulesManager:                 i.modulesManager,
 		instanceEvaluationDataProvider: i.instanceEvaluationDataProvider,
 		sticky:                         sticky,
-		DefaultVariationValue:          options.DefaultVariationValue,
-		DefaultVariableValue:           options.DefaultVariableValue,
-		DefaultVariableValueSet:        options.DefaultVariableValueSet,
+		stickyVariables: func() *StickyVariables {
+			if options.stickyVariables != nil {
+				return options.stickyVariables
+			}
+			return i.stickyVariables
+		}(),
+		DefaultVariationValue:   options.DefaultVariationValue,
+		DefaultVariableValue:    options.DefaultVariableValue,
+		DefaultVariableValueSet: options.DefaultVariableValueSet,
 	}
+}
+
+// EvaluateGlobalVariable evaluates an independently defined variable.
+func (i *Featurevisor) EvaluateGlobalVariable(variableKey string, args ...interface{}) Evaluation {
+	context, options := parseEvaluationArgs(args)
+	key := VariableKey(variableKey)
+	return evaluateWithModules(EvaluateOptions{
+		evaluateParams:       evaluateParams{Type: EvaluationTypeVariable, VariableKey: &key, GlobalVariable: true},
+		evaluateDependencies: i.getEvaluationDependencies(context, options),
+	})
+}
+
+// GetGlobalVariable gets an independently defined variable.
+func (i *Featurevisor) GetGlobalVariable(variableKey string, args ...interface{}) VariableValue {
+	return getGlobalVariableValue(i.EvaluateGlobalVariable(variableKey, args...))
+}
+
+func getGlobalVariableValue(evaluation Evaluation) VariableValue {
+	if evaluation.VariableValue == nil {
+		return nil
+	}
+	if evaluation.GlobalVariable != nil && evaluation.GlobalVariable.Type == VariableTypeJSON {
+		if raw, ok := evaluation.VariableValue.(string); ok {
+			var value interface{}
+			if json.Unmarshal([]byte(raw), &value) == nil {
+				return value
+			}
+		}
+	}
+	if evaluation.GlobalVariable != nil && evaluation.Reason == EvaluationReasonVariableDefault {
+		return getValueByType(evaluation.VariableValue, string(evaluation.GlobalVariable.Type))
+	}
+	return evaluation.VariableValue
+}
+
+func (i *Featurevisor) GetGlobalVariableBoolean(variableKey string, args ...interface{}) *bool {
+	value, ok := i.GetGlobalVariable(variableKey, args...).(bool)
+	if !ok {
+		return nil
+	}
+	return &value
+}
+func (i *Featurevisor) GetGlobalVariableString(variableKey string, args ...interface{}) *string {
+	value, ok := i.GetGlobalVariable(variableKey, args...).(string)
+	if !ok {
+		return nil
+	}
+	return &value
+}
+func (i *Featurevisor) GetGlobalVariableInteger(variableKey string, args ...interface{}) *int {
+	value := i.GetGlobalVariable(variableKey, args...)
+	if number, ok := value.(float64); ok {
+		result := int(number)
+		return &result
+	}
+	if number, ok := value.(int); ok {
+		return &number
+	}
+	return nil
+}
+func (i *Featurevisor) GetGlobalVariableDouble(variableKey string, args ...interface{}) *float64 {
+	value := i.GetGlobalVariable(variableKey, args...)
+	if number, ok := value.(float64); ok {
+		return &number
+	}
+	return nil
+}
+func (i *Featurevisor) GetGlobalVariableArray(variableKey string, args ...interface{}) []string {
+	value := i.GetGlobalVariable(variableKey, args...)
+	if result, ok := value.([]string); ok {
+		return result
+	}
+	if values, ok := value.([]interface{}); ok {
+		result := make([]string, 0, len(values))
+		for _, item := range values {
+			if text, ok := item.(string); ok {
+				result = append(result, text)
+			}
+		}
+		return result
+	}
+	return nil
+}
+func (i *Featurevisor) GetGlobalVariableObject(variableKey string, args ...interface{}) map[string]interface{} {
+	value, _ := i.GetGlobalVariable(variableKey, args...).(map[string]interface{})
+	return value
+}
+func (i *Featurevisor) GetGlobalVariableJSON(variableKey string, args ...interface{}) interface{} {
+	return i.GetGlobalVariable(variableKey, args...)
+}
+
+// GetGlobalVariableArrayInto decodes an array global variable into out.
+func (i *Featurevisor) GetGlobalVariableArrayInto(variableKey string, args ...interface{}) error {
+	context, options, out, err := parseVariableIntoArgs(args...)
+	if err != nil {
+		return err
+	}
+	value := i.GetGlobalVariable(variableKey, context, options)
+	if value == nil {
+		return fmt.Errorf("global variable %q is unavailable", variableKey)
+	}
+	return decodeInto(value, out)
+}
+
+// GetGlobalVariableObjectInto decodes an object global variable into out.
+func (i *Featurevisor) GetGlobalVariableObjectInto(variableKey string, args ...interface{}) error {
+	return i.GetGlobalVariableArrayInto(variableKey, args...)
 }
 
 func parseEvaluationArgs(args []interface{}) (Context, OverrideOptions) {
@@ -891,8 +1057,8 @@ func (i *Featurevisor) GetVariableObjectInto(featureKey string, variableKey stri
 	return decodeInto(objectValue, out)
 }
 
-// GetAllEvaluations gets all evaluations for features
-func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, options OverrideOptions) EvaluatedFeatures {
+// GetFeatureEvaluations evaluates a feature snapshot.
+func (i *Featurevisor) GetFeatureEvaluations(context Context, featureKeys []string, options OverrideOptions) EvaluatedFeatures {
 	result := EvaluatedFeatures{}
 
 	keys := featureKeys
@@ -939,6 +1105,19 @@ func (i *Featurevisor) GetAllEvaluations(context Context, featureKeys []string, 
 	return result
 }
 
+// GetVariableEvaluations evaluates a global variable snapshot.
+func (i *Featurevisor) GetVariableEvaluations(context Context, variableKeys []string, options OverrideOptions) EvaluatedVariables {
+	result := EvaluatedVariables{}
+	keys := variableKeys
+	if len(keys) == 0 {
+		keys = i.GetGlobalVariableKeys()
+	}
+	for _, key := range keys {
+		result[key] = i.GetGlobalVariable(key, context, options)
+	}
+	return result
+}
+
 func mergeStoredDatafile(existing DatafileContent, incoming DatafileContent) DatafileContent {
 	mergedSegments := map[SegmentKey]Segment{}
 	for key, value := range existing.Segments {
@@ -955,6 +1134,13 @@ func mergeStoredDatafile(existing DatafileContent, incoming DatafileContent) Dat
 	for key, value := range incoming.Features {
 		mergedFeatures[key] = value
 	}
+	mergedVariables := map[GlobalVariableKey]GlobalVariable{}
+	for key, value := range existing.Variables {
+		mergedVariables[key] = value
+	}
+	for key, value := range incoming.Variables {
+		mergedVariables[key] = value
+	}
 
 	return DatafileContent{
 		SchemaVersion:       incoming.SchemaVersion,
@@ -962,6 +1148,7 @@ func mergeStoredDatafile(existing DatafileContent, incoming DatafileContent) Dat
 		FeaturevisorVersion: incoming.FeaturevisorVersion,
 		Segments:            mergedSegments,
 		Features:            mergedFeatures,
+		Variables:           mergedVariables,
 	}
 }
 

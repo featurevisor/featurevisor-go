@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/featurevisor/featurevisor-go/v2/cmd/commands"
+	"github.com/featurevisor/featurevisor-go/v3/cmd/commands"
 )
 
 func main() {

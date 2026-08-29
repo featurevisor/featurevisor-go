@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	featurevisor "github.com/featurevisor/featurevisor-go/v2"
+	featurevisor "github.com/featurevisor/featurevisor-go/v3"
 )
 
 // BenchmarkOutput represents the result of a benchmark operation
@@ -84,6 +84,12 @@ func benchmarkFeatureVariable(
 	})
 }
 
+func benchmarkGlobalVariable(instance *featurevisor.Featurevisor, variableKey string, context featurevisor.Context, n int) BenchmarkOutput {
+	return benchmarkEvaluation(n, func() interface{} {
+		return instance.GetGlobalVariable(variableKey, context, featurevisor.OverrideOptions{})
+	})
+}
+
 func formatDurationMs(duration time.Duration) string {
 	return fmt.Sprintf("%.6fms", float64(duration.Nanoseconds())/1_000_000.0)
 }
@@ -140,8 +146,8 @@ func runBenchmark(opts CLIOptions) {
 		return
 	}
 
-	if opts.Feature == "" {
-		fmt.Println("Feature is required")
+	if opts.Feature == "" && opts.Variable == "" {
+		fmt.Println("Feature or global variable is required")
 		return
 	}
 
@@ -165,7 +171,11 @@ func runBenchmark(opts CLIOptions) {
 	level := featurevisor.LogLevel(levelStr)
 
 	fmt.Println("")
-	fmt.Printf("Running benchmark for feature \"%s\"...\n", opts.Feature)
+	if opts.Feature == "" {
+		fmt.Printf("Running benchmark for global variable \"%s\"...\n", opts.Variable)
+	} else {
+		fmt.Printf("Running benchmark for feature \"%s\"...\n", opts.Feature)
+	}
 	fmt.Println("")
 
 	datafileBuildStart := time.Now()
@@ -206,7 +216,10 @@ func runBenchmark(opts CLIOptions) {
 	fmt.Printf("Against context: %s\n", string(contextJSON))
 
 	var output BenchmarkOutput
-	if opts.Variation {
+	if opts.Feature == "" {
+		fmt.Printf("Evaluating global variable \"%s\" %d times...\n", opts.Variable, opts.N)
+		output = benchmarkGlobalVariable(instance, opts.Variable, context, opts.N)
+	} else if opts.Variation {
 		// variation
 		fmt.Printf("Evaluating variation %d times...\n", opts.N)
 		output = benchmarkFeatureVariation(instance, opts.Feature, context, opts.N)

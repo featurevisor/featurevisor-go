@@ -9,10 +9,11 @@ import (
 type EventName string
 
 const (
-	EventNameDatafileSet EventName = "datafile_set"
-	EventNameContextSet  EventName = "context_set"
-	EventNameStickySet   EventName = "sticky_set"
-	EventNameError       EventName = "error"
+	EventNameDatafileSet        EventName = "datafile_set"
+	EventNameContextSet         EventName = "context_set"
+	EventNameStickyFeaturesSet  EventName = "sticky_features_set"
+	EventNameStickyVariablesSet EventName = "sticky_variables_set"
+	EventNameError              EventName = "error"
 )
 
 // EventDetails represents additional details for events

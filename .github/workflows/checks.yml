@@ -57,32 +57,25 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          path: featurevisor-go
-
-      - uses: actions/checkout@v7
-        with:
-          repository: featurevisor/featurevisor
-          ref: main
-          path: featurevisor
 
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25.x"
-          cache-dependency-path: featurevisor-go/go.sum
+          cache-dependency-path: go.sum
 
       - uses: actions/setup-node@v7
         with:
-          node-version-file: "featurevisor/.nvmrc"
-          cache: npm
-          cache-dependency-path: featurevisor/package-lock.json
+          node-version-file: ".nvmrc"
+          package-manager-cache: false
 
-      - name: Build Featurevisor CLI
-        working-directory: featurevisor
+      - name: Set up Featurevisor example-1 project
         run: |
-          npm ci
-          npm run build
+          mkdir example-1
+          cd example-1
+          npx --yes @featurevisor/cli@3 init --example=1
+          npm install
+          npx featurevisor build
+          npx featurevisor test --onlyFailures
 
       - name: Run example-1 through Go SDK
-        working-directory: featurevisor-go
-        run: go run ./cmd/main.go test --projectDirectoryPath=../featurevisor/examples/example-1 --onlyFailures
+        run: go run ./cmd/main.go test --projectDirectoryPath=./example-1 --onlyFailures

@@ -5,11 +5,57 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"time"
 
-	"github.com/featurevisor/featurevisor-go/v2"
+	"github.com/featurevisor/featurevisor-go/v3"
 )
+
+func valuesEqual(left, right interface{}) bool {
+	normalize := func(value interface{}) interface{} {
+		raw, _ := json.Marshal(value)
+		var result interface{}
+		_ = json.Unmarshal(raw, &result)
+		return result
+	}
+	return reflect.DeepEqual(normalize(left), normalize(right))
+}
+
+// RunTestVariable tests a global variable assertion.
+func RunTestVariable(assertion map[string]interface{}, variableKey string, instance *featurevisor.Featurevisor, level string) AssertionResult {
+	started := time.Now()
+	context := featurevisor.Context{}
+	if value, ok := assertion["context"].(map[string]interface{}); ok {
+		context = featurevisor.Context(value)
+	}
+	if raw, ok := assertion["stickyVariables"].(map[string]interface{}); ok {
+		sticky := featurevisor.StickyVariables{}
+		for key, value := range raw {
+			sticky[key] = value
+		}
+		instance.SetStickyVariables(sticky, true)
+	}
+	options := featurevisor.OverrideOptions{}
+	if value, ok := assertion["defaultVariableValue"]; ok {
+		options.DefaultVariableValue = value
+		options.DefaultVariableValueSet = true
+	}
+	evaluation := instance.EvaluateGlobalVariable(variableKey, context, options)
+	errors := ""
+	if expected, ok := assertion["expectedValue"]; ok && !valuesEqual(evaluation.VariableValue, expected) {
+		errors += fmt.Sprintf("      ✘ expectedValue: expected %v but received %v\n", expected, evaluation.VariableValue)
+	}
+	if expectedFields, ok := assertion["expectedEvaluation"].(map[string]interface{}); ok {
+		for key, expected := range expectedFields {
+			actual := getEvaluationValue(evaluation, key)
+			if !valuesEqual(actual, expected) {
+				errors += fmt.Sprintf("      ✘ expectedEvaluation.%s: expected %v but received %v\n", key, expected, actual)
+			}
+		}
+	}
+	return AssertionResult{HasError: errors != "", Errors: errors, Duration: time.Since(started).Seconds()}
+}
 
 // TestFeature tests a feature with the given assertion
 func RunTestFeature(assertion map[string]interface{}, featureKey string, instance *featurevisor.Featurevisor, level string) AssertionResult {
@@ -43,7 +89,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 				stickyFeatures[featurevisor.FeatureKey(key)] = evaluatedFeature
 			}
 		}
-		instance.SetSticky(stickyFeatures, false)
+		instance.SetStickyFeatures(stickyFeatures, false)
 	}
 
 	// Create override options
@@ -220,7 +266,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 							stickyFeatures[featurevisor.FeatureKey(key)] = evaluatedFeature
 						}
 					}
-					childInstance.SetSticky(stickyFeatures, false)
+					childInstance.SetStickyFeatures(stickyFeatures, false)
 				}
 
 				childResult := RunTestFeatureChild(childMap, featureKey, childInstance, level)
@@ -520,6 +566,8 @@ func getEvaluationValue(evaluation featurevisor.Evaluation, key string) interfac
 		return evaluation.Force
 	case "required":
 		return evaluation.Required
+	case "requiredFeatures":
+		return evaluation.RequiredFeatures
 	case "sticky":
 		return evaluation.Sticky
 	case "variation":
@@ -543,6 +591,13 @@ func getEvaluationValue(evaluation featurevisor.Evaluation, key string) interfac
 			return *evaluation.VariableOverrideIndex
 		}
 		return nil
+	case "variableOverrideKey":
+		if evaluation.VariableOverrideKey != nil {
+			return *evaluation.VariableOverrideKey
+		}
+		return nil
+	case "variableOverridePath":
+		return evaluation.VariableOverridePath
 	default:
 		return nil
 	}
@@ -655,8 +710,7 @@ func compareValues(actual, expected interface{}) bool {
 	case string, bool, int, float64:
 		return actual == expected
 	default:
-		// For uncomparable types, return false
-		return false
+		return valuesEqual(actual, expected)
 	}
 }
 
@@ -956,7 +1010,7 @@ func runTest(opts CLIOptions) {
 	for _, test := range tests {
 		testKey := test["key"].(string)
 		assertions := test["assertions"].([]interface{})
-		if _, hasFeature := test["feature"]; hasFeature && len(opts.Targets) > 0 {
+		if _, hasFeature := test["feature"]; (hasFeature || test["variable"] != nil) && len(opts.Targets) > 0 {
 			filtered := make([]interface{}, 0, len(assertions))
 			for _, raw := range assertions {
 				assertion, ok := raw.(map[string]interface{})
@@ -1002,6 +1056,16 @@ func runTest(opts CLIOptions) {
 					}
 
 					testResult = RunTestFeature(effectiveAssertion, test["feature"].(string), instance, level)
+					instance.Close()
+				} else if variableKey, hasVariable := test["variable"].(string); hasVariable {
+					selectedDatafileKey := datafileCacheKeyForAssertion(assertionMap, datafileCache)
+					datafile, ok := datafileCache[selectedDatafileKey]
+					if !ok {
+						fmt.Printf("missing datafile for key: %s\n", selectedDatafileKey)
+						os.Exit(1)
+					}
+					instance := buildInstanceForAssertion(datafile, level, assertionMap)
+					testResult = RunTestVariable(assertionMap, variableKey, instance, level)
 					instance.Close()
 				} else if _, hasSegment := test["segment"]; hasSegment {
 					segmentKey := test["segment"].(string)

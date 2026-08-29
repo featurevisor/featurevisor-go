@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/featurevisor/featurevisor-go/v2"
+	"github.com/featurevisor/featurevisor-go/v3"
 )
 
 // UUID_LENGTHS matches the TypeScript implementation

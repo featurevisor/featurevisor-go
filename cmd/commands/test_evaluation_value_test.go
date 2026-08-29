@@ -3,7 +3,7 @@ package commands
 import (
 	"testing"
 
-	"github.com/featurevisor/featurevisor-go/v2"
+	"github.com/featurevisor/featurevisor-go/v3"
 )
 
 func TestGetEvaluationValueVariableOverrideIndex(t *testing.T) {
