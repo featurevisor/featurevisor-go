@@ -551,7 +551,7 @@ Modules can also subscribe to diagnostics or report their own from `Setup` via t
 
 Every diagnostic has `Level`, `Code`, `Message`, and an object-shaped `Details` map. Optional `Module`, `ModuleName`, and `OriginalError` fields describe provenance. Evaluation metadata belongs in `Details`.
 
-Diagnostic handlers are isolated from SDK behavior. A panic in a handler does not stop other handlers or evaluations.
+Diagnostic handlers are isolated from SDK behaviour. A panic in a handler does not stop other handlers or evaluations.
 
 ## Events
 
@@ -658,6 +658,8 @@ And optionally these properties depending on whether you are evaluating a featur
 Modules allow you to intercept the evaluation process and customize it further as per your needs.
 
 For feature evaluations, all `Before` callbacks run in registration order, followed by all `BeforeEvaluation` callbacks. After evaluation and caller defaults, all `AfterEvaluation` callbacks run, followed by all `After` callbacks. Global variable evaluations use only `BeforeEvaluation` and `AfterEvaluation`. Required feature checks run through the complete module pipeline, and transformed defaults are preserved.
+
+`Before` and `After` remain available as deprecated feature-only compatibility callbacks. Use `BeforeEvaluation` and `AfterEvaluation` for new modules so the same callbacks can handle feature and global variable evaluations.
 
 ### Defining a module
 
@@ -812,7 +814,7 @@ f.Close()
 
 This package also provides a CLI tool for running your Featurevisor [project](https://featurevisor.com/docs/projects/)'s test specs and benchmarking against this Go SDK:
 
-All three commands accept repeatable `--target=<target>` options. `test` builds only the selected Target datafiles and runs untargeted assertions plus assertions for those targets. `benchmark` and `assess-distribution` run independently against every selected Target datafile. Without `--target`, existing project-wide behavior is preserved. Project definitions, test specs, Target discovery, and datafile generation continue to come from the Node.js CLI.
+All three commands accept repeatable `--target=<target>` options. `test` builds only the selected Target datafiles and runs untargeted assertions plus assertions for those targets. `benchmark` and `assess-distribution` run independently against every selected Target datafile. Without `--target`, existing project-wide behaviour is preserved. Project definitions, test specs, Target discovery, and datafile generation continue to come from the Node.js CLI.
 
 ### Test
 
