@@ -50,7 +50,7 @@ func TestDatafileCacheKeyForTargetAssertion(t *testing.T) {
 	}
 }
 
-func TestDatafileCacheKeyForTargetAssertionFallsBackToBase(t *testing.T) {
+func TestDatafileCacheKeyForTargetAssertionDoesNotFallBackToBase(t *testing.T) {
 	cache := map[string]interface{}{
 		"production": map[string]interface{}{"kind": "base"},
 	}
@@ -60,8 +60,8 @@ func TestDatafileCacheKeyForTargetAssertionFallsBackToBase(t *testing.T) {
 		"target":      "checkout",
 	}, cache)
 
-	if got != "production" {
-		t.Fatalf("expected production, got %s", got)
+	if got != "production-target-checkout" {
+		t.Fatalf("expected production-target-checkout, got %s", got)
 	}
 }
 
