@@ -22,39 +22,112 @@ func valuesEqual(left, right interface{}) bool {
 	return reflect.DeepEqual(normalize(left), normalize(right))
 }
 
-// RunTestVariable tests a global variable assertion.
-func RunTestVariable(assertion map[string]interface{}, variableKey string, instance *featurevisor.Featurevisor, level string) AssertionResult {
-	started := time.Now()
-	context := featurevisor.Context{}
-	if value, ok := assertion["context"].(map[string]interface{}); ok {
-		context = featurevisor.Context(value)
+func formatTestValue(value interface{}) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprintf("%v", value)
 	}
-	if raw, ok := assertion["stickyVariables"].(map[string]interface{}); ok {
-		sticky := featurevisor.StickyVariables{}
-		for key, value := range raw {
-			sticky[key] = value
-		}
-		instance.SetStickyVariables(sticky, true)
-	}
+	return string(raw)
+}
+
+type globalVariableEvaluator interface {
+	EvaluateGlobalVariable(variableKey string, args ...interface{}) featurevisor.Evaluation
+}
+
+func evaluateVariableAssertion(assertion map[string]interface{}, variableKey string, evaluator globalVariableEvaluator, prefix string) string {
 	options := featurevisor.OverrideOptions{}
 	if value, ok := assertion["defaultVariableValue"]; ok {
 		options.DefaultVariableValue = value
 		options.DefaultVariableValueSet = true
 	}
-	evaluation := instance.EvaluateGlobalVariable(variableKey, context, options)
+	evaluation := evaluator.EvaluateGlobalVariable(variableKey, featurevisor.Context{}, options)
 	errors := ""
 	if expected, ok := assertion["expectedValue"]; ok && !valuesEqual(evaluation.VariableValue, expected) {
-		errors += fmt.Sprintf("      ✘ expectedValue: expected %v but received %v\n", expected, evaluation.VariableValue)
+		errors += fmt.Sprintf("      ✘ %sexpectedValue: expected %s but received %s\n", prefix, formatTestValue(expected), formatTestValue(evaluation.VariableValue))
 	}
 	if expectedFields, ok := assertion["expectedEvaluation"].(map[string]interface{}); ok {
 		for key, expected := range expectedFields {
 			actual := getEvaluationValue(evaluation, key)
 			if !valuesEqual(actual, expected) {
-				errors += fmt.Sprintf("      ✘ expectedEvaluation.%s: expected %v but received %v\n", key, expected, actual)
+				errors += fmt.Sprintf("      ✘ %sexpectedEvaluation.%s: expected %s but received %s\n", prefix, key, formatTestValue(expected), formatTestValue(actual))
 			}
 		}
 	}
+	return errors
+}
+
+// RunTestVariable tests a global variable assertion.
+func RunTestVariable(assertion map[string]interface{}, variableKey string, instance *featurevisor.Featurevisor, level string) AssertionResult {
+	started := time.Now()
+	errors := evaluateVariableAssertion(assertion, variableKey, instance, "")
+	if children, ok := assertion["children"].([]interface{}); ok {
+		for index, rawChild := range children {
+			childAssertion, ok := rawChild.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			childContext := contextFromAssertion(childAssertion)
+			childStickyFeatures := stickyFeaturesFromAssertion(childAssertion, "stickyFeatures")
+			childStickyVariables := stickyVariablesFromAssertion(childAssertion)
+			child := instance.Spawn(childContext, featurevisor.SpawnOptions{
+				StickyFeatures:  childStickyFeatures,
+				StickyVariables: childStickyVariables,
+			})
+			func() {
+				defer child.Close()
+				errors += evaluateVariableAssertion(childAssertion, variableKey, child, fmt.Sprintf("children[%d].", index))
+			}()
+		}
+	}
 	return AssertionResult{HasError: errors != "", Errors: errors, Duration: time.Since(started).Seconds()}
+}
+
+func contextFromAssertion(assertion map[string]interface{}) featurevisor.Context {
+	if value, ok := assertion["context"].(map[string]interface{}); ok {
+		return featurevisor.Context(value)
+	}
+	return featurevisor.Context{}
+}
+
+func stickyVariablesFromAssertion(assertion map[string]interface{}) *featurevisor.StickyVariables {
+	raw, ok := assertion["stickyVariables"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	sticky := featurevisor.StickyVariables{}
+	for key, value := range raw {
+		sticky[key] = value
+	}
+	return &sticky
+}
+
+func stickyFeaturesFromAssertion(assertion map[string]interface{}, field string) *featurevisor.StickyFeatures {
+	raw, ok := assertion[field].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	sticky := featurevisor.StickyFeatures{}
+	for key, value := range raw {
+		featureValue, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		evaluated := featurevisor.EvaluatedFeature{}
+		if enabled, ok := featureValue["enabled"].(bool); ok {
+			evaluated.Enabled = enabled
+		}
+		if variation, ok := featureValue["variation"].(string); ok {
+			evaluated.Variation = &variation
+		}
+		if variables, ok := featureValue["variables"].(map[string]interface{}); ok {
+			evaluated.Variables = map[featurevisor.VariableKey]featurevisor.VariableValue{}
+			for variableKey, variableValue := range variables {
+				evaluated.Variables[featurevisor.VariableKey(variableKey)] = variableValue
+			}
+		}
+		sticky[featurevisor.FeatureKey(key)] = evaluated
+	}
+	return &sticky
 }
 
 // TestFeature tests a feature with the given assertion
@@ -234,42 +307,13 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 					childContext = featurevisor.Context(childCtx)
 				}
 
-				// Create override options for child with sticky values
-				childOverrideOptions := featurevisor.OverrideOptions{
-					DefaultVariationValue: getDefaultVariationValue(childMap),
-				}
-
-				// Pass sticky values to child instance (matching TypeScript implementation)
-				childInstance := instance.Spawn(childContext, childOverrideOptions)
-
-				// Set sticky values for child if they exist
-				if sticky, ok := assertion["sticky"].(map[string]interface{}); ok {
-					// Convert sticky to proper format
-					stickyFeatures := featurevisor.StickyFeatures{}
-					for key, value := range sticky {
-						if featureSticky, ok := value.(map[string]interface{}); ok {
-							evaluatedFeature := featurevisor.EvaluatedFeature{}
-							if enabled, ok := featureSticky["enabled"].(bool); ok {
-								evaluatedFeature.Enabled = enabled
-							}
-							if variation, ok := featureSticky["variation"]; ok {
-								if variationStr, ok := variation.(string); ok {
-									evaluatedFeature.Variation = &variationStr
-								}
-							}
-							if variables, ok := featureSticky["variables"].(map[string]interface{}); ok {
-								evaluatedFeature.Variables = make(map[featurevisor.VariableKey]featurevisor.VariableValue)
-								for varKey, varValue := range variables {
-									evaluatedFeature.Variables[featurevisor.VariableKey(varKey)] = varValue
-								}
-							}
-							stickyFeatures[featurevisor.FeatureKey(key)] = evaluatedFeature
-						}
-					}
-					childInstance.SetStickyFeatures(stickyFeatures, false)
-				}
-
-				childResult := RunTestFeatureChild(childMap, featureKey, childInstance, level)
+				childInstance := instance.Spawn(childContext, featurevisor.SpawnOptions{
+					StickyFeatures: stickyFeaturesFromAssertion(assertion, "sticky"),
+				})
+				childResult := func() AssertionResult {
+					defer childInstance.Close()
+					return RunTestFeatureChild(childMap, featureKey, childInstance, level)
+				}()
 
 				if childResult.HasError {
 					hasError = true
@@ -850,16 +894,11 @@ func datafileCacheKeyForAssertion(assertion map[string]interface{}, datafileCach
 		}
 	}
 
-	selectedDatafileKey := datafileCacheKey(environment)
-
 	if targetValue, ok := assertion["target"].(string); ok && targetValue != "" {
-		targetKey := targetDatafileCacheKey(environment, targetValue)
-		if _, exists := datafileCache[targetKey]; exists {
-			selectedDatafileKey = targetKey
-		}
+		return targetDatafileCacheKey(environment, targetValue)
 	}
 
-	return selectedDatafileKey
+	return datafileCacheKey(environment)
 }
 
 func buildDatafileCache(
@@ -945,8 +984,11 @@ func buildInstanceForAssertion(datafile interface{}, level string, assertion map
 
 	levelStr := featurevisor.LogLevel(level)
 	return featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
-		Datafile: datafileContent,
-		LogLevel: &levelStr,
+		Datafile:        datafileContent,
+		LogLevel:        &levelStr,
+		Context:         contextFromAssertion(assertion),
+		StickyFeatures:  stickyFeaturesFromAssertion(assertion, "stickyFeatures"),
+		StickyVariables: stickyVariablesFromAssertion(assertion),
 		Modules: []*featurevisor.FeaturevisorModule{
 			{
 				Name: "tester-module",
@@ -1040,33 +1082,39 @@ func runTest(opts CLIOptions) {
 
 					datafile, ok := datafileCache[selectedDatafileKey]
 					if !ok {
-						fmt.Printf("missing datafile for key: %s\n", selectedDatafileKey)
-						os.Exit(1)
+						testResult = missingDatafileAssertion(assertionMap, selectedDatafileKey)
+					} else {
+
+						effectiveAssertion := cloneAssertion(assertionMap)
+						instance := buildInstanceForAssertion(datafile, level, effectiveAssertion)
+
+						// Show datafile if requested (matching TypeScript implementation)
+						if opts.ShowDatafile {
+							fmt.Println("")
+							datafileJSON, _ := json.MarshalIndent(datafile, "", "  ")
+							fmt.Println(string(datafileJSON))
+							fmt.Println("")
+						}
+
+						testResult = RunTestFeature(effectiveAssertion, test["feature"].(string), instance, level)
+						instance.Close()
 					}
-
-					effectiveAssertion := cloneAssertion(assertionMap)
-					instance := buildInstanceForAssertion(datafile, level, effectiveAssertion)
-
-					// Show datafile if requested (matching TypeScript implementation)
-					if opts.ShowDatafile {
-						fmt.Println("")
-						datafileJSON, _ := json.MarshalIndent(datafile, "", "  ")
-						fmt.Println(string(datafileJSON))
-						fmt.Println("")
-					}
-
-					testResult = RunTestFeature(effectiveAssertion, test["feature"].(string), instance, level)
-					instance.Close()
 				} else if variableKey, hasVariable := test["variable"].(string); hasVariable {
 					selectedDatafileKey := datafileCacheKeyForAssertion(assertionMap, datafileCache)
 					datafile, ok := datafileCache[selectedDatafileKey]
 					if !ok {
-						fmt.Printf("missing datafile for key: %s\n", selectedDatafileKey)
-						os.Exit(1)
+						testResult = missingDatafileAssertion(assertionMap, selectedDatafileKey)
+					} else {
+						if opts.ShowDatafile {
+							fmt.Println("")
+							datafileJSON, _ := json.MarshalIndent(datafile, "", "  ")
+							fmt.Println(string(datafileJSON))
+							fmt.Println("")
+						}
+						instance := buildInstanceForAssertion(datafile, level, assertionMap)
+						testResult = RunTestVariable(assertionMap, variableKey, instance, level)
+						instance.Close()
 					}
-					instance := buildInstanceForAssertion(datafile, level, assertionMap)
-					testResult = RunTestVariable(assertionMap, variableKey, instance, level)
-					instance.Close()
 				} else if _, hasSegment := test["segment"]; hasSegment {
 					segmentKey := test["segment"].(string)
 					segment := segmentsByKey[segmentKey]
@@ -1114,6 +1162,19 @@ func runTest(opts CLIOptions) {
 		// Exit with error code 1
 		os.Exit(1)
 	}
+}
+
+func missingDatafileAssertion(assertion map[string]interface{}, cacheKey string) AssertionResult {
+	environment, _ := assertion["environment"].(string)
+	if environment == "" {
+		environment = "none"
+	}
+	target, _ := assertion["target"].(string)
+	message := fmt.Sprintf("datafile not found for environment %q", environment)
+	if target != "" {
+		message += fmt.Sprintf(" and target %q", target)
+	}
+	return AssertionResult{HasError: true, Errors: fmt.Sprintf("      ✘ %s (cache key: %s)\n", message, cacheKey)}
 }
 
 func convertToStringSlice(interfaces []interface{}) []string {

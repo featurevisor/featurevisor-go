@@ -120,6 +120,25 @@ func TestStickyFeaturesInitialization(t *testing.T) {
 	}
 }
 
+func TestStickyDisabledFeatureIsHonoured(t *testing.T) {
+	instance := CreateFeaturevisor(FeaturevisorOptions{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "sticky-disabled",
+			Segments:      map[SegmentKey]Segment{},
+			Features: map[FeatureKey]Feature{
+				"test": {BucketBy: []string{"userId"}},
+			},
+		},
+		StickyFeatures: &StickyFeatures{"test": {Enabled: false}},
+	})
+	defer instance.Close()
+
+	if instance.IsEnabled("test", Context{"userId": "123"}) {
+		t.Fatal("expected sticky disabled feature to remain disabled")
+	}
+}
+
 // TestSetStickyVariadicSignature tests that the new variadic signature works correctly
 func TestSetStickyVariadicSignature(t *testing.T) {
 	instance := CreateFeaturevisor(FeaturevisorOptions{})

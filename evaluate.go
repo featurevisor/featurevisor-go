@@ -322,16 +322,17 @@ func evaluate(options EvaluateOptions) Evaluation {
 	if options.sticky != nil {
 		if stickyFeature, exists := (*options.sticky)[options.FeatureKey]; exists {
 			// flag
-			if options.Type == EvaluationTypeFlag && stickyFeature.Enabled {
+			if options.Type == EvaluationTypeFlag {
+				enabled := stickyFeature.Enabled
 				evaluation = Evaluation{
 					Type:       options.Type,
 					FeatureKey: options.FeatureKey,
 					Reason:     EvaluationReasonSticky,
 					Sticky:     &stickyFeature,
-					Enabled:    &[]bool{true}[0],
+					Enabled:    &enabled,
 				}
 
-				options.diagnosticReporter.Debug("using sticky enabled", logDetails{
+				options.diagnosticReporter.Debug("using sticky feature", logDetails{
 					"evaluation": evaluation,
 				})
 

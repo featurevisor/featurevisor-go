@@ -3,7 +3,7 @@ module github.com/featurevisor/featurevisor-go/openfeature/v3
 go 1.25.0
 
 require (
-	github.com/featurevisor/featurevisor-go/v3 v3.0.0
+	github.com/featurevisor/featurevisor-go/v3 v3.1.0
 	github.com/open-feature/go-sdk v1.17.2
 )
 
