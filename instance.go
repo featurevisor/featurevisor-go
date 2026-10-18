@@ -3,11 +3,13 @@ package featurevisor
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
+	"sync/atomic"
 )
 
 // OverrideOptions contains options for overriding evaluation
 type OverrideOptions struct {
-	sticky          *StickyFeatures
+	stickyFeatures  *StickyFeatures
 	stickyVariables *StickyVariables
 
 	DefaultVariationValue   *VariationValue
@@ -41,12 +43,14 @@ type moduleDiagnosticSubscription struct {
 
 // Featurevisor represents a Featurevisor SDK instance
 type Featurevisor struct {
+	stateMu         sync.RWMutex
+	dependencyIndex *datafileDependencyIndex
 	// from options
 	context         Context
 	diagnostics     *diagnosticReporter
 	logLevel        LogLevel
 	onDiagnostic    FeaturevisorDiagnosticHandler
-	sticky          *StickyFeatures
+	stickyFeatures  *StickyFeatures
 	stickyVariables *StickyVariables
 
 	// internally created
@@ -57,6 +61,7 @@ type Featurevisor struct {
 	nextModuleDiagnosticID         int
 	emitter                        *emitter
 	closed                         bool
+	stateGeneration                atomic.Uint64
 }
 
 // CreateFeaturevisor creates a new Featurevisor instance.
@@ -136,6 +141,8 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 			code = "condition_match_error"
 		} else if message == "Error parsing conditions" {
 			code = "conditions_parse_error"
+		} else if message == "getVariable failed" {
+			code = "evaluation_error"
 		} else if message == "panic during evaluation" || message == "panic in evaluate" {
 			code = "evaluation_error"
 		}
@@ -143,7 +150,13 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 			Level: logLevel, Code: code, Message: string(message), OriginalError: originalError, Details: details,
 		}, nil)
 	})
-	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{Level: &level, Handler: &handler})
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{
+		Level:   &level,
+		Handler: &handler,
+		ShouldHandle: func(level LogLevel) bool {
+			return instance == nil || instance.shouldReportDiagnostic(level)
+		},
+	})
 
 	// Create emitter
 	emitter := newEmitter()
@@ -169,7 +182,7 @@ func CreateFeaturevisor(options FeaturevisorOptions) *Featurevisor {
 		emitter:                        emitter,
 		datafile:                       emptyDatafile,
 		instanceEvaluationDataProvider: instanceEvaluationDataProvider,
-		sticky:                         options.StickyFeatures,
+		stickyFeatures:                 options.StickyFeatures,
 		stickyVariables:                options.StickyVariables,
 	}
 
@@ -199,10 +212,14 @@ func (i *Featurevisor) SetLogLevel(level LogLevel) {
 	i.diagnostics.SetLevel(level)
 }
 
-// SetDatafile sets the datafile
-func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
-	if i.closed {
-		return
+// SetDatafile returns true when the datafile is accepted, even if unchanged.
+// Rejected input and calls after Close return false.
+func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) bool {
+	i.stateMu.RLock()
+	closed := i.closed
+	i.stateMu.RUnlock()
+	if closed {
+		return false
 	}
 
 	replaceValue := false
@@ -218,10 +235,16 @@ func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
 			Message:       "Could not parse datafile",
 			OriginalError: err,
 		}, nil)
-		return
+		return false
 	}
 
+	datafileContent, normalizationErrors := normalizeLegacyDatafile(datafileContent)
 	storedDatafile := datafileContent
+	i.stateMu.Lock()
+	if i.closed {
+		i.stateMu.Unlock()
+		return false
+	}
 	if !replaceValue {
 		storedDatafile = mergeStoredDatafile(i.datafile, datafileContent)
 	}
@@ -231,11 +254,56 @@ func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
 		diagnosticReporter: i.diagnostics,
 	})
 
-	details := getParamsForDatafileSetEvent(i.instanceEvaluationDataProvider, newInstanceEvaluationDataProvider, replaceValue)
+	if !replaceValue && i.instanceEvaluationDataProvider != nil {
+		old := i.instanceEvaluationDataProvider
+		old.entityMu.Lock()
+		retain := func(kind, key string) {
+			identity := kind + ":" + key
+			slot := old.entitySlots[identity]
+			if slot == nil {
+				slot = &normalizedEntitySlot{value: old.entities[identity]}
+				old.entitySlots[identity] = slot
+			}
+			newInstanceEvaluationDataProvider.entitySlots[identity] = slot
+			if value, ok := old.entities[identity]; ok {
+				newInstanceEvaluationDataProvider.entities[identity] = value
+			}
+		}
+		for key := range old.features {
+			if _, incoming := datafileContent.Features[key]; !incoming {
+				retain("feature", key)
+			}
+		}
+		for key := range old.variables {
+			if _, incoming := datafileContent.Variables[key]; !incoming {
+				retain("variable", key)
+			}
+		}
+		for key := range old.segments {
+			if _, incoming := datafileContent.Segments[key]; !incoming {
+				retain("segment", key)
+			}
+		}
+		old.entityMu.Unlock()
+	}
+	features, variables := updateAffectedDatafileEntities(i.instanceEvaluationDataProvider, newInstanceEvaluationDataProvider, datafileContent, replaceValue, &i.dependencyIndex)
+	details := logDetails{
+		"revision":         storedDatafile.Revision,
+		"previousRevision": i.datafile.Revision,
+		"revisionChanged":  i.datafile.Revision != storedDatafile.Revision,
+		"features":         features,
+		"variables":        variables,
+		"replaced":         replaceValue,
+	}
 
 	i.datafile = storedDatafile
 	i.instanceEvaluationDataProvider = newInstanceEvaluationDataProvider
+	i.stateGeneration.Add(1)
+	i.stateMu.Unlock()
 
+	for _, diagnostic := range normalizationErrors {
+		i.reportDiagnostic(diagnostic, nil)
+	}
 	i.reportDiagnostic(FeaturevisorDiagnostic{
 		Level:   LogLevelInfo,
 		Code:    "datafile_set",
@@ -243,11 +311,14 @@ func (i *Featurevisor) SetDatafile(datafile interface{}, replace ...bool) {
 		Details: details,
 	}, nil)
 	i.emitter.Trigger(EventNameDatafileSet, EventDetails(details))
+	return true
 }
 
 // SetStickyFeatures sets sticky feature evaluations.
 func (i *Featurevisor) SetStickyFeatures(sticky StickyFeatures, replace ...bool) {
+	i.stateMu.Lock()
 	if i.closed {
+		i.stateMu.Unlock()
 		return
 	}
 
@@ -257,25 +328,35 @@ func (i *Featurevisor) SetStickyFeatures(sticky StickyFeatures, replace ...bool)
 	}
 
 	previousStickyFeatures := StickyFeatures{}
-	if i.sticky != nil {
-		previousStickyFeatures = *i.sticky
+	if i.stickyFeatures != nil {
+		for key, value := range *i.stickyFeatures {
+			previousStickyFeatures[key] = value
+		}
 	}
 
 	if replaceValue {
-		i.sticky = &sticky
+		next := StickyFeatures{}
+		for key, value := range sticky {
+			next[key] = value
+		}
+		i.stickyFeatures = &next
 	} else {
 		newSticky := StickyFeatures{}
-		if i.sticky != nil {
-			newSticky = *i.sticky
+		if i.stickyFeatures != nil {
+			for key, value := range *i.stickyFeatures {
+				newSticky[key] = value
+			}
 		}
 		// Merge sticky features
 		for key, value := range sticky {
 			newSticky[key] = value
 		}
-		i.sticky = &newSticky
+		i.stickyFeatures = &newSticky
 	}
+	i.stateGeneration.Add(1)
 
-	params := getParamsForStickyFeaturesSetEvent(previousStickyFeatures, *i.sticky, replaceValue)
+	params := getParamsForStickyFeaturesSetEvent(previousStickyFeatures, *i.stickyFeatures, replaceValue)
+	i.stateMu.Unlock()
 
 	i.reportDiagnostic(FeaturevisorDiagnostic{
 		Level:   LogLevelInfo,
@@ -288,7 +369,9 @@ func (i *Featurevisor) SetStickyFeatures(sticky StickyFeatures, replace ...bool)
 
 // SetStickyVariables sets sticky global variable values.
 func (i *Featurevisor) SetStickyVariables(sticky StickyVariables, replace ...bool) {
+	i.stateMu.Lock()
 	if i.closed {
+		i.stateMu.Unlock()
 		return
 	}
 	replaceValue := len(replace) > 0 && replace[0]
@@ -308,6 +391,8 @@ func (i *Featurevisor) SetStickyVariables(sticky StickyVariables, replace ...boo
 		next[key] = value
 	}
 	i.stickyVariables = &next
+	i.stateGeneration.Add(1)
+	i.stateMu.Unlock()
 	keys := make([]string, 0, len(previous)+len(next))
 	seen := map[string]bool{}
 	for key := range previous {
@@ -329,60 +414,85 @@ func (i *Featurevisor) SetStickyVariables(sticky StickyVariables, replace ...boo
 
 // GetRevision returns the revision
 func (i *Featurevisor) GetRevision() string {
-	return i.instanceEvaluationDataProvider.GetRevision()
+	return i.dataProvider().GetRevision()
+}
+
+func (i *Featurevisor) dataProvider() *instanceEvaluationDataProvider {
+	i.stateMu.RLock()
+	defer i.stateMu.RUnlock()
+	return i.instanceEvaluationDataProvider
+}
+
+func (i *Featurevisor) isClosed() bool {
+	i.stateMu.RLock()
+	defer i.stateMu.RUnlock()
+	return i.closed
 }
 
 func (i *Featurevisor) GetSchemaVersion() string {
-	return i.instanceEvaluationDataProvider.GetSchemaVersion()
+	return i.dataProvider().GetSchemaVersion()
 }
 
 func (i *Featurevisor) GetSegment(segmentKey string) *Segment {
-	return i.instanceEvaluationDataProvider.GetSegment(SegmentKey(segmentKey))
+	return i.dataProvider().GetSegment(SegmentKey(segmentKey))
 }
 
 func (i *Featurevisor) GetFeatureKeys() []string {
-	return i.instanceEvaluationDataProvider.GetFeatureKeys()
+	return i.dataProvider().GetFeatureKeys()
 }
 
 func (i *Featurevisor) GetVariableKeys(featureKey string) []string {
-	return i.instanceEvaluationDataProvider.GetVariableKeys(FeatureKey(featureKey))
+	return i.dataProvider().GetVariableKeys(FeatureKey(featureKey))
 }
 
 // GetGlobalVariableKeys returns all global variable keys.
 func (i *Featurevisor) GetGlobalVariableKeys() []string {
-	return i.instanceEvaluationDataProvider.GetGlobalVariableKeys()
+	return i.dataProvider().GetGlobalVariableKeys()
 }
 
 func (i *Featurevisor) HasVariations(featureKey string) bool {
-	return i.instanceEvaluationDataProvider.HasVariations(FeatureKey(featureKey))
+	return i.dataProvider().HasVariations(FeatureKey(featureKey))
 }
 
 // GetFeature returns a feature by key
 func (i *Featurevisor) GetFeature(featureKey string) *Feature {
-	return i.instanceEvaluationDataProvider.GetFeature(FeatureKey(featureKey))
+	return i.dataProvider().GetFeature(FeatureKey(featureKey))
 }
 
 // AddModule adds a module.
 func (i *Featurevisor) AddModule(module *FeaturevisorModule) FeaturevisorUnsubscribe {
-	if i.closed {
+	if i.isClosed() {
 		return nil
 	}
 
-	return i.modulesManager.Add(module)
+	unsubscribe := i.modulesManager.Add(module)
+	if unsubscribe == nil {
+		return nil
+	}
+	if i.isClosed() {
+		unsubscribe()
+		return nil
+	}
+	i.stateGeneration.Add(1)
+	return func() {
+		unsubscribe()
+		i.stateGeneration.Add(1)
+	}
 }
 
 // RemoveModule removes modules by name.
 func (i *Featurevisor) RemoveModule(name string) {
-	if i.closed {
+	if i.isClosed() {
 		return
 	}
 
 	i.modulesManager.Remove(name)
+	i.stateGeneration.Add(1)
 }
 
 // On adds an event listener
 func (i *Featurevisor) On(eventName EventName, callback EventCallback) Unsubscribe {
-	if i.closed {
+	if i.isClosed() {
 		return func() {}
 	}
 
@@ -391,13 +501,20 @@ func (i *Featurevisor) On(eventName EventName, callback EventCallback) Unsubscri
 
 // Close closes the instance
 func (i *Featurevisor) Close() {
+	i.stateMu.Lock()
 	if i.closed {
+		i.stateMu.Unlock()
 		return
 	}
 
 	i.closed = true
+	i.dependencyIndex = nil
+	i.stateGeneration.Add(1)
+	provider := i.instanceEvaluationDataProvider
+	i.stateMu.Unlock()
 	i.modulesManager.CloseAll()
 	i.moduleDiagnosticSubscriptions = nil
+	provider.closeExpressionCache()
 	i.emitter.ClearAll()
 }
 
@@ -464,6 +581,18 @@ func (i *Featurevisor) reportDiagnostic(
 	}
 }
 
+func (i *Featurevisor) shouldReportDiagnostic(level LogLevel) bool {
+	if level == LogLevelError || shouldLogDiagnostic(i.logLevel, level) {
+		return true
+	}
+	for _, subscription := range i.moduleDiagnosticSubscriptions {
+		if shouldLogDiagnostic(subscription.logLevel, level) {
+			return true
+		}
+	}
+	return false
+}
+
 func (i *Featurevisor) getModuleApi(module *FeaturevisorModule) FeaturevisorModuleApi {
 	return FeaturevisorModuleApi{
 		GetRevision: func() string {
@@ -520,7 +649,9 @@ func (i *Featurevisor) clearModuleDiagnosticSubscriptions(module *FeaturevisorMo
 
 // SetContext sets the context
 func (i *Featurevisor) SetContext(context Context, replace ...bool) {
+	i.stateMu.Lock()
 	if i.closed {
+		i.stateMu.Unlock()
 		return
 	}
 
@@ -530,16 +661,19 @@ func (i *Featurevisor) SetContext(context Context, replace ...bool) {
 	}
 
 	if replaceValue {
-		i.context = context
+		i.context = copyContext(context)
 	} else {
 		// Merge context
 		for key, value := range context {
 			i.context[key] = value
 		}
 	}
+	i.stateGeneration.Add(1)
+	updatedContext := copyContext(i.context)
+	i.stateMu.Unlock()
 
 	i.emitter.Trigger("context_set", map[string]interface{}{
-		"context":  i.context,
+		"context":  updatedContext,
 		"replaced": replaceValue,
 	})
 
@@ -553,7 +687,7 @@ func (i *Featurevisor) SetContext(context Context, replace ...bool) {
 		Code:    "context_set",
 		Message: message,
 		Details: logDetails{
-			"context":  i.context,
+			"context":  updatedContext,
 			"replaced": replaceValue,
 		},
 	}, nil)
@@ -561,15 +695,11 @@ func (i *Featurevisor) SetContext(context Context, replace ...bool) {
 
 // GetContext returns the context
 func (i *Featurevisor) GetContext(context Context) Context {
-	if context == nil {
-		return i.context
-	}
+	i.stateMu.RLock()
+	defer i.stateMu.RUnlock()
 
 	// Merge contexts
-	result := Context{}
-	for key, value := range i.context {
-		result[key] = value
-	}
+	result := copyContext(i.context)
 	for key, value := range context {
 		result[key] = value
 	}
@@ -596,26 +726,32 @@ func (i *Featurevisor) Spawn(args ...interface{}) *FeaturevisorChild {
 	return newFeaturevisorChild(childOptions{
 		Parent:          i,
 		Context:         i.GetContext(contextValue),
-		Sticky:          optionsValue.StickyFeatures,
+		StickyFeatures:  optionsValue.StickyFeatures,
 		StickyVariables: optionsValue.StickyVariables,
 	})
 }
 
 // getEvaluationDependencies gets evaluation dependencies
 func (i *Featurevisor) getEvaluationDependencies(context Context, options OverrideOptions) evaluateDependencies {
-	var sticky *StickyFeatures
-	if options.sticky != nil {
-		sticky = options.sticky
+	i.stateMu.RLock()
+	storedContext := copyContext(i.context)
+	effectiveContext := copyContext(storedContext)
+	for key, value := range context {
+		effectiveContext[key] = value
+	}
+	var stickyFeatures *StickyFeatures
+	if options.stickyFeatures != nil {
+		stickyFeatures = options.stickyFeatures
 	} else {
-		sticky = i.sticky
+		stickyFeatures = i.stickyFeatures
 	}
 
-	return evaluateDependencies{
-		Context:                        i.GetContext(context),
+	dependencies := evaluateDependencies{
+		Context:                        effectiveContext,
 		diagnosticReporter:             i.diagnostics,
 		modulesManager:                 i.modulesManager,
 		instanceEvaluationDataProvider: i.instanceEvaluationDataProvider,
-		sticky:                         sticky,
+		stickyFeatures:                 stickyFeatures,
 		stickyVariables: func() *StickyVariables {
 			if options.stickyVariables != nil {
 				return options.stickyVariables
@@ -626,11 +762,48 @@ func (i *Featurevisor) getEvaluationDependencies(context Context, options Overri
 		DefaultVariableValue:    options.DefaultVariableValue,
 		DefaultVariableValueSet: options.DefaultVariableValueSet,
 	}
+	dependencies.seenStateVersion = i.stateGeneration.Load()
+	i.stateMu.RUnlock()
+	dependencies.storedContextSnapshot = storedContext
+	dependencies.refreshStickyVariables = func() *StickyVariables {
+		if options.stickyVariables != nil {
+			return options.stickyVariables
+		}
+		i.stateMu.RLock()
+		defer i.stateMu.RUnlock()
+		return i.stickyVariables
+	}
+	dependencies.stateVersion = i.stateGeneration.Load
+	dependencies.refreshState = func(current *evaluateDependencies) {
+		version := i.stateGeneration.Load()
+		if version == current.seenStateVersion {
+			return
+		}
+		i.stateMu.RLock()
+		defer i.stateMu.RUnlock()
+		version = i.stateGeneration.Load()
+		newStored := copyContext(i.context)
+		mergeChangedStoredContext(current.Context, current.storedContextSnapshot, newStored, context)
+		current.storedContextSnapshot = newStored
+		if options.stickyFeatures == nil {
+			current.stickyFeatures = i.stickyFeatures
+		}
+		if options.stickyVariables == nil {
+			current.stickyVariables = i.stickyVariables
+		}
+		current.instanceEvaluationDataProvider = i.instanceEvaluationDataProvider
+		current.seenStateVersion = version
+	}
+	return dependencies
 }
 
 // EvaluateGlobalVariable evaluates an independently defined variable.
 func (i *Featurevisor) EvaluateGlobalVariable(variableKey string, args ...interface{}) Evaluation {
 	context, options := parseEvaluationArgs(args)
+	return i.evaluateGlobalVariable(variableKey, context, options)
+}
+
+func (i *Featurevisor) evaluateGlobalVariable(variableKey string, context Context, options OverrideOptions) Evaluation {
 	key := VariableKey(variableKey)
 	return evaluateWithModules(EvaluateOptions{
 		evaluateParams:       evaluateParams{Type: EvaluationTypeVariable, VariableKey: &key, GlobalVariable: true},
@@ -640,25 +813,8 @@ func (i *Featurevisor) EvaluateGlobalVariable(variableKey string, args ...interf
 
 // GetGlobalVariable gets an independently defined variable.
 func (i *Featurevisor) GetGlobalVariable(variableKey string, args ...interface{}) VariableValue {
-	return getGlobalVariableValue(i.EvaluateGlobalVariable(variableKey, args...))
-}
-
-func getGlobalVariableValue(evaluation Evaluation) VariableValue {
-	if evaluation.VariableValue == nil {
-		return nil
-	}
-	if evaluation.GlobalVariable != nil && evaluation.GlobalVariable.Type == VariableTypeJSON {
-		if raw, ok := evaluation.VariableValue.(string); ok {
-			var value interface{}
-			if json.Unmarshal([]byte(raw), &value) == nil {
-				return value
-			}
-		}
-	}
-	if evaluation.GlobalVariable != nil && evaluation.Reason == EvaluationReasonVariableDefault {
-		return getValueByType(evaluation.VariableValue, string(evaluation.GlobalVariable.Type))
-	}
-	return evaluation.VariableValue
+	context, options := parseEvaluationArgs(args)
+	return normalizedGetterValue(i.evaluateGlobalVariable(variableKey, context, options), i.diagnostics)
 }
 
 func (i *Featurevisor) GetGlobalVariableBoolean(variableKey string, args ...interface{}) *bool {
@@ -752,6 +908,10 @@ func parseEvaluationArgs(args []interface{}) (Context, OverrideOptions) {
 // EvaluateFlag evaluates a feature flag.
 func (i *Featurevisor) EvaluateFlag(featureKey string, args ...interface{}) Evaluation {
 	context, options := parseEvaluationArgs(args)
+	return i.evaluateFlag(featureKey, context, options)
+}
+
+func (i *Featurevisor) evaluateFlag(featureKey string, context Context, options OverrideOptions) Evaluation {
 	return evaluateWithModules(EvaluateOptions{
 		evaluateParams: evaluateParams{
 			Type:       EvaluationTypeFlag,
@@ -772,21 +932,8 @@ func (i *Featurevisor) IsEnabled(featureKey string, args ...interface{}) bool {
 		}
 	}()
 
-	// Default values
-	contextValue := Context{}
-	optionsValue := OverrideOptions{}
-
-	// Parse variadic arguments
-	for _, arg := range args {
-		switch v := arg.(type) {
-		case Context:
-			contextValue = v
-		case OverrideOptions:
-			optionsValue = v
-		}
-	}
-
-	evaluation := i.EvaluateFlag(featureKey, contextValue, optionsValue)
+	context, options := parseEvaluationArgs(args)
+	evaluation := i.evaluateFlag(featureKey, context, options)
 
 	if evaluation.Enabled != nil {
 		return *evaluation.Enabled
@@ -798,6 +945,10 @@ func (i *Featurevisor) IsEnabled(featureKey string, args ...interface{}) bool {
 // EvaluateVariation evaluates a feature variation
 func (i *Featurevisor) EvaluateVariation(featureKey string, args ...interface{}) Evaluation {
 	context, options := parseEvaluationArgs(args)
+	return i.evaluateVariation(featureKey, context, options)
+}
+
+func (i *Featurevisor) evaluateVariation(featureKey string, context Context, options OverrideOptions) Evaluation {
 	return evaluateWithModules(EvaluateOptions{
 		evaluateParams: evaluateParams{
 			Type:       EvaluationTypeVariation,
@@ -818,21 +969,8 @@ func (i *Featurevisor) GetVariation(featureKey string, args ...interface{}) *str
 		}
 	}()
 
-	// Default values
-	contextValue := Context{}
-	optionsValue := OverrideOptions{}
-
-	// Parse variadic arguments
-	for _, arg := range args {
-		switch v := arg.(type) {
-		case Context:
-			contextValue = v
-		case OverrideOptions:
-			optionsValue = v
-		}
-	}
-
-	evaluation := i.EvaluateVariation(featureKey, contextValue, optionsValue)
+	context, options := parseEvaluationArgs(args)
+	evaluation := i.evaluateVariation(featureKey, context, options)
 
 	if evaluation.VariationValue != nil {
 		// VariationValue is already a string type alias
@@ -852,6 +990,10 @@ func (i *Featurevisor) GetVariation(featureKey string, args ...interface{}) *str
 // EvaluateVariable evaluates a feature variable
 func (i *Featurevisor) EvaluateVariable(featureKey string, variableKey VariableKey, args ...interface{}) Evaluation {
 	context, options := parseEvaluationArgs(args)
+	return i.evaluateVariable(featureKey, variableKey, context, options)
+}
+
+func (i *Featurevisor) evaluateVariable(featureKey string, variableKey VariableKey, context Context, options OverrideOptions) Evaluation {
 	return evaluateWithModules(EvaluateOptions{
 		evaluateParams: evaluateParams{
 			Type:        EvaluationTypeVariable,
@@ -866,7 +1008,7 @@ func (i *Featurevisor) EvaluateVariable(featureKey string, variableKey VariableK
 func (i *Featurevisor) GetVariable(featureKey string, variableKey string, args ...interface{}) VariableValue {
 	defer func() {
 		if r := recover(); r != nil {
-			i.diagnostics.Error("getVariable", logDetails{
+			i.diagnostics.Error("getVariable failed", logDetails{
 				"featureKey":  featureKey,
 				"variableKey": variableKey,
 				"error":       r,
@@ -874,49 +1016,9 @@ func (i *Featurevisor) GetVariable(featureKey string, variableKey string, args .
 		}
 	}()
 
-	// Default values
-	contextValue := Context{}
-	optionsValue := OverrideOptions{}
-
-	// Parse variadic arguments
-	for _, arg := range args {
-		switch v := arg.(type) {
-		case Context:
-			contextValue = v
-		case OverrideOptions:
-			optionsValue = v
-		}
-	}
-
-	evaluation := i.EvaluateVariable(featureKey, VariableKey(variableKey), contextValue, optionsValue)
-
-	if evaluation.VariableValue != nil {
-		// Handle JSON variables
-		if evaluation.VariableSchema != nil && evaluation.VariableSchema.Type == "json" {
-			if variableStr, ok := evaluation.VariableValue.(string); ok {
-				var parsedJSON interface{}
-				if err := json.Unmarshal([]byte(variableStr), &parsedJSON); err == nil {
-					return parsedJSON
-				} else {
-					// Log error if JSON parsing fails
-					i.diagnostics.Error("could not parse JSON variable", logDetails{
-						"featureKey":  featureKey,
-						"variableKey": variableKey,
-						"error":       err,
-					})
-				}
-			}
-		}
-
-		// Apply type conversion for default values
-		if evaluation.VariableSchema != nil && evaluation.Reason == EvaluationReasonVariableDefault {
-			return getValueByType(evaluation.VariableValue, string(evaluation.VariableSchema.Type))
-		}
-
-		return evaluation.VariableValue
-	}
-
-	return nil
+	context, options := parseEvaluationArgs(args)
+	evaluation := i.evaluateVariable(featureKey, VariableKey(variableKey), context, options)
+	return normalizedGetterValue(evaluation, i.diagnostics)
 }
 
 // GetVariableBoolean gets a boolean variable
@@ -1064,7 +1166,7 @@ func (i *Featurevisor) GetFeatureEvaluations(context Context, featureKeys []stri
 	keys := featureKeys
 	if len(keys) == 0 {
 		// Get all feature keys
-		allKeys := i.instanceEvaluationDataProvider.GetFeatureKeys()
+		allKeys := i.dataProvider().GetFeatureKeys()
 		keys = make([]string, len(allKeys))
 		for j, key := range allKeys {
 			keys[j] = string(key)
@@ -1078,7 +1180,7 @@ func (i *Featurevisor) GetFeatureEvaluations(context Context, featureKeys []stri
 		}
 
 		// variation
-		if i.instanceEvaluationDataProvider.HasVariations(FeatureKey(featureKey)) {
+		if i.dataProvider().HasVariations(FeatureKey(featureKey)) {
 			variation := i.GetVariation(featureKey, context, options)
 			if variation != nil {
 				evaluatedFeature.Variation = variation
@@ -1086,7 +1188,7 @@ func (i *Featurevisor) GetFeatureEvaluations(context Context, featureKeys []stri
 		}
 
 		// variables
-		variableKeys := i.instanceEvaluationDataProvider.GetVariableKeys(FeatureKey(featureKey))
+		variableKeys := i.dataProvider().GetVariableKeys(FeatureKey(featureKey))
 		if len(variableKeys) > 0 {
 			evaluatedFeature.Variables = make(map[VariableKey]VariableValue)
 			for _, variableKey := range variableKeys {

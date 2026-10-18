@@ -30,7 +30,7 @@ func getValueByType(value interface{}, fieldType string) interface{} {
 			}
 		}
 		return nil
-	case "double":
+	case "number", "double":
 		switch v := value.(type) {
 		case float64:
 			if !math.IsNaN(v) && !math.IsInf(v, 0) {
@@ -46,13 +46,15 @@ func getValueByType(value interface{}, fieldType string) interface{} {
 		}
 		return nil
 	case "array":
-		if arr, ok := value.([]interface{}); ok {
-			return arr
+		kind := reflect.ValueOf(value).Kind()
+		if kind == reflect.Slice || kind == reflect.Array {
+			return value
 		}
 		return nil
 	case "object":
-		if obj, ok := value.(map[string]interface{}); ok {
-			return obj
+		reflected := reflect.ValueOf(value)
+		if reflected.Kind() == reflect.Map && reflected.Type().Key().Kind() == reflect.String {
+			return value
 		}
 		return nil
 	case "json":

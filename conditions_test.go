@@ -12,6 +12,37 @@ func conditionValue(v interface{}) *ConditionValue {
 	return &cv
 }
 
+func TestPortableHostDatePrecisionAndBounds(t *testing.T) {
+	date, ok := parsePortableDate(time.Unix(-1, 999500000))
+	if !ok || date.UnixMilli() != -1 || date.Nanosecond() != 999000000 {
+		t.Fatalf("pre-epoch host date must floor to the preceding millisecond: %v, %t", date, ok)
+	}
+	wideOffset := time.Date(2024, time.January, 1, 15, 0, 0, 0, time.FixedZone("wide", 15*3600))
+	if _, ok := parsePortableDate(wideOffset); ok {
+		t.Fatal("host date offsets must stay within the portable range")
+	}
+	if _, ok := parsePortableDate(time.Date(10000, time.January, 1, 0, 0, 0, 0, time.UTC)); ok {
+		t.Fatal("host date beyond the UTC year range must fail")
+	}
+}
+
+func TestPortableStringDateFractionalPrecision(t *testing.T) {
+	for _, digits := range []string{"1239", "123999", "1239999", "123999999"} {
+		value := "2024-01-01T00:00:00." + digits + "Z"
+		date, ok := parsePortableDate(value)
+		if !ok || date.Nanosecond() != 123000000 {
+			t.Errorf("%s must truncate to .123: %v, %t", value, date, ok)
+		}
+	}
+	if _, ok := parsePortableDate("2024-01-01T00:00:00.1234567890Z"); ok {
+		t.Fatal("ten fractional digits must be rejected")
+	}
+	date, ok := parsePortableDate("1969-12-31T23:59:59.999999999Z")
+	if !ok || date.UnixMilli() != -1 {
+		t.Fatalf("pre-epoch fraction must truncate to the preceding millisecond: %v, %t", date, ok)
+	}
+}
+
 func TestGetValueFromContext(t *testing.T) {
 	context := Context{
 		"user": map[string]interface{}{
@@ -826,11 +857,11 @@ func TestConditionIsMatchedComprehensive(t *testing.T) {
 
 		// NOT condition
 		notCondition := NotCondition{
-			Not: PlainCondition{
+			Not: []Condition{PlainCondition{
 				Attribute: "browser_type",
 				Operator:  OperatorEquals,
 				Value:     conditionValue("chrome"),
-			},
+			}},
 		}
 		context = Context{"browser_type": "firefox"}
 		if !reader.AllConditionsAreMatched(notCondition, context) {

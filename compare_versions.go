@@ -3,7 +3,6 @@ package featurevisor
 import (
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -14,6 +13,12 @@ var semverRegex = regexp.MustCompile(`(?i)^[v^~<>=]*?(\d+)(?:\.([x*]|\d+)(?:\.([
 func validateAndParse(version string) ([]string, error) {
 	if version == "" {
 		return nil, fmt.Errorf("invalid argument expected string")
+	}
+
+	for _, c := range version {
+		if c > 127 {
+			return nil, fmt.Errorf("invalid argument not valid semver ('%s' received)", version)
+		}
 	}
 
 	matches := semverRegex.FindStringSubmatch(version)
@@ -30,71 +35,65 @@ func isWildcard(s string) bool {
 	return s == "*" || s == "x" || s == "X"
 }
 
-// forceType ensures both values are of the same type for comparison
-func forceType(a, b interface{}) (interface{}, interface{}) {
-	if fmt.Sprintf("%T", a) != fmt.Sprintf("%T", b) {
-		return fmt.Sprintf("%v", a), fmt.Sprintf("%v", b)
-	}
-	return a, b
-}
-
-// tryParse attempts to parse a string as an integer, returns the original string if it fails
-func tryParse(v string) interface{} {
-	if n, err := strconv.Atoi(v); err == nil {
-		return n
-	}
-	return v
-}
-
 // compareStrings compares two strings, handling wildcards and mixed types
-func compareStrings(a, b string) int {
-	if isWildcard(a) || isWildcard(b) {
+func compareStrings(a, b string, prerelease bool) int {
+	if !prerelease && (isWildcard(a) || isWildcard(b)) {
 		return 0
 	}
-
-	ap, bp := forceType(tryParse(a), tryParse(b))
-
-	switch apVal := ap.(type) {
-	case int:
-		if bpVal, ok := bp.(int); ok {
-			if apVal > bpVal {
-				return 1
-			} else if apVal < bpVal {
-				return -1
-			}
-			return 0
+	numeric := func(s string) bool {
+		if s == "" {
+			return false
 		}
-		// Mixed types, convert to string comparison
-		apStr := fmt.Sprintf("%v", ap)
-		bpStr := fmt.Sprintf("%v", bp)
-		return strings.Compare(apStr, bpStr)
-	default:
-		// String comparison
-		apStr := fmt.Sprintf("%v", ap)
-		bpStr := fmt.Sprintf("%v", bp)
-		return strings.Compare(apStr, bpStr)
+		for _, c := range s {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return true
 	}
+	an, bn := numeric(a), numeric(b)
+	if an && bn {
+		a, b = strings.TrimLeft(a, "0"), strings.TrimLeft(b, "0")
+		if len(a) > len(b) {
+			return 1
+		}
+		if len(a) < len(b) {
+			return -1
+		}
+	} else if prerelease && an != bn {
+		if an {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(a, b)
 }
 
 // compareSegments compares two arrays of version segments
-func compareSegments(a, b []string) int {
+func compareSegments(a, b []string, prerelease bool) int {
 	maxLen := len(a)
 	if len(b) > maxLen {
 		maxLen = len(b)
 	}
 
 	for i := 0; i < maxLen; i++ {
+		if prerelease && (i == len(a) || i == len(b)) {
+			if len(a) < len(b) {
+				return -1
+			}
+			return 1
+		}
 		aVal := "0"
 		bVal := "0"
 
-		if i < len(a) {
+		if i < len(a) && a[i] != "" {
 			aVal = a[i]
 		}
-		if i < len(b) {
+		if i < len(b) && b[i] != "" {
 			bVal = b[i]
 		}
 
-		result := compareStrings(aVal, bVal)
+		result := compareStrings(aVal, bVal, prerelease)
 		if result != 0 {
 			return result
 		}
@@ -121,7 +120,7 @@ func compareVersions(v1, v2 string) (int, error) {
 		return 0, fmt.Errorf("invalid second version: %w", err)
 	}
 
-	// Pop off the patch (last element)
+	// Separate the prerelease capture from the core components
 	var p1, p2 string
 	if len(n1) > 0 {
 		p1 = n1[len(n1)-1]
@@ -133,16 +132,16 @@ func compareVersions(v1, v2 string) (int, error) {
 	}
 
 	// Compare main version segments
-	result := compareSegments(n1, n2)
+	result := compareSegments(n1, n2, false)
 	if result != 0 {
 		return result, nil
 	}
 
-	// Compare pre-release versions
+	// Compare prerelease versions
 	if p1 != "" && p2 != "" {
 		p1Parts := strings.Split(p1, ".")
 		p2Parts := strings.Split(p2, ".")
-		return compareSegments(p1Parts, p2Parts), nil
+		return compareSegments(p1Parts, p2Parts, true), nil
 	} else if p1 != "" || p2 != "" {
 		if p1 != "" {
 			return -1, nil

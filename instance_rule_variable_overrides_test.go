@@ -1,6 +1,33 @@
 package featurevisor
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
+
+func TestLateGlobalOverrideKeepsFirstMatchAndIndex(t *testing.T) {
+	overrides := make([]VariableOverride, 128)
+	for index := range overrides {
+		overrides[index] = VariableOverride{
+			Conditions: map[string]interface{}{"attribute": "role", "operator": "equals", "value": fmt.Sprintf("missing-%d", index)},
+			Value:      fmt.Sprintf("value-%d", index),
+		}
+	}
+	overrides[126].Conditions = map[string]interface{}{"attribute": "role", "operator": "equals", "value": "member"}
+	overrides[127].Conditions = overrides[126].Conditions
+	sdk := CreateFeaturevisor(FeaturevisorOptions{Datafile: DatafileContent{
+		SchemaVersion: "2", Revision: "late", Segments: map[SegmentKey]Segment{},
+		Features: map[FeatureKey]Feature{},
+		Variables: map[GlobalVariableKey]GlobalVariable{
+			"message": {DefaultValue: "default", Overrides: overrides},
+		},
+	}})
+
+	evaluation := sdk.EvaluateGlobalVariable("message", Context{"role": "member"})
+	if evaluation.Reason != EvaluationReasonVariableOverrideRule || evaluation.VariableOverrideIndex == nil || *evaluation.VariableOverrideIndex != 126 || evaluation.VariableValue != "value-126" {
+		t.Fatalf("expected first late override, got %#v", evaluation)
+	}
+}
 
 func TestRuleVariableOverridesParity(t *testing.T) {
 	jsonDatafile := `{

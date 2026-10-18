@@ -1,4 +1,6 @@
-.PHONY: build test test-openfeature test-example-1 verify-packages clean setup-monorepo update-monorepo
+.PHONY: build check test test-openfeature test-example-1 verify-packages clean setup-monorepo update-monorepo
+
+check: test verify-packages
 
 build:
 	mkdir -p build
@@ -16,8 +18,8 @@ test-example-1:
 	go run cmd/main.go test --projectDirectoryPath=../featurevisor/examples/example-1 --onlyFailures
 
 verify-packages:
-	test "$$(go list -m)" = "github.com/featurevisor/featurevisor-go/v3"
-	test "$$(cd openfeature && GOWORK=off go list -m)" = "github.com/featurevisor/featurevisor-go/openfeature/v3"
+	test "$$(go list -m)" = "github.com/featurevisor/featurevisor-go/v4"
+	test "$$(cd openfeature && GOWORK=off go list -m)" = "github.com/featurevisor/featurevisor-go/openfeature/v4"
 	(cd openfeature && GOWORK=off go list -deps ./... >/dev/null)
 
 clean:

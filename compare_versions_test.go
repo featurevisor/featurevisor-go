@@ -94,28 +94,6 @@ func TestIsWildcard(t *testing.T) {
 	}
 }
 
-func TestTryParse(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected interface{}
-	}{
-		{"123", 123},
-		{"0", 0},
-		{"alpha", "alpha"},
-		{"1.2", "1.2"},
-		{"", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := tryParse(tt.input)
-			if result != tt.expected {
-				t.Errorf("tryParse(%s) = %v, expected %v", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestCompareStrings(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -137,7 +115,7 @@ func TestCompareStrings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := compareStrings(tt.a, tt.b)
+			result := compareStrings(tt.a, tt.b, false)
 			if result != tt.expected {
 				t.Errorf("compareStrings(%s, %s) = %d, expected %d", tt.a, tt.b, result, tt.expected)
 			}
@@ -163,7 +141,7 @@ func TestCompareSegments(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := compareSegments(tt.a, tt.b)
+			result := compareSegments(tt.a, tt.b, false)
 			if result != tt.expected {
 				t.Errorf("compareSegments(%v, %v) = %d, expected %d", tt.a, tt.b, result, tt.expected)
 			}

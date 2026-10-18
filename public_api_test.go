@@ -3,13 +3,13 @@ package featurevisor_test
 import (
 	"testing"
 
-	featurevisor "github.com/featurevisor/featurevisor-go/v3"
+	featurevisor "github.com/featurevisor/featurevisor-go/v4"
 )
 
 func TestPublicAPIContractsCompileForExternalConsumers(t *testing.T) {
 	module := featurevisor.FeaturevisorModule{
 		Name: "public-api",
-		Before: func(options featurevisor.EvaluateOptions) featurevisor.EvaluateOptions {
+		BeforeEvaluation: func(options featurevisor.EvaluateOptions) featurevisor.EvaluateOptions {
 			options.Context["fromModule"] = true
 			return options
 		},

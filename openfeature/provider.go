@@ -8,9 +8,10 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
-	featurevisor "github.com/featurevisor/featurevisor-go/v3"
+	featurevisor "github.com/featurevisor/featurevisor-go/v4"
 	of "github.com/open-feature/go-sdk/openfeature"
 )
 
@@ -38,6 +39,11 @@ type Provider struct {
 	globalVariablePrefix string
 	onTrack              func(TrackingEvent)
 	datafileError        string
+	errorMu              sync.RWMutex
+	closed               bool
+	initialized          bool
+	events               chan of.Event
+	errorUnsubscribe     featurevisor.Unsubscribe
 	datafileUnsubscribe  featurevisor.Unsubscribe
 	ownsFeaturevisor     bool
 }
@@ -49,6 +55,7 @@ func NewProvider(options Options) *Provider {
 		variationKey:         valueOr(options.VariationKey, "variation"),
 		globalVariablePrefix: valueOr(options.GlobalVariablePrefix, "variable"),
 		onTrack:              options.OnTrack,
+		events:               make(chan of.Event, 1),
 	}
 	if strings.Contains(p.globalVariablePrefix, p.keySeparator) {
 		panic("globalVariablePrefix cannot contain keySeparator")
@@ -58,36 +65,74 @@ func NewProvider(options Options) *Provider {
 	} else {
 		p.ownsFeaturevisor = true
 		fvOptions := options.FeaturevisorOptions
-		if datafile, ok := fvOptions.Datafile.(string); ok && datafile != "" && !json.Valid([]byte(datafile)) {
-			p.datafileError = "Could not parse datafile"
-		}
-		originalHandler := fvOptions.OnDiagnostic
-		fvOptions.OnDiagnostic = func(diagnostic featurevisor.FeaturevisorDiagnostic) {
-			if diagnostic.Code == "invalid_datafile" {
-				p.datafileError = diagnostic.Message
-			}
-			if diagnostic.Code == "datafile_set" {
-				p.datafileError = ""
-			}
-			if originalHandler != nil {
-				originalHandler(diagnostic)
-			}
+		fvOptions.Datafile = nil
+		if fvOptions.OnDiagnostic == nil {
+			fvOptions.OnDiagnostic = func(featurevisor.FeaturevisorDiagnostic) {}
 		}
 		p.featurevisor = featurevisor.CreateFeaturevisor(fvOptions)
 	}
 	p.datafileUnsubscribe = p.featurevisor.On(featurevisor.EventNameDatafileSet, func(featurevisor.EventDetails) {
-		p.datafileError = ""
+		p.setDatafileError("")
 	})
+	p.errorUnsubscribe = p.featurevisor.On(featurevisor.EventNameError, func(details featurevisor.EventDetails) {
+		if diagnostic, ok := details["diagnostic"].(featurevisor.FeaturevisorDiagnostic); ok && diagnostic.Code == "invalid_datafile" {
+			p.setDatafileError(diagnostic.Message)
+		}
+	})
+	if p.ownsFeaturevisor && options.FeaturevisorOptions.Datafile != nil {
+		p.featurevisor.SetDatafile(options.FeaturevisorOptions.Datafile, true)
+	}
 	return p
+}
+
+func (p *Provider) setDatafileError(message string) {
+	p.errorMu.Lock()
+	defer p.errorMu.Unlock()
+	previous := p.datafileError
+	p.datafileError = message
+	if !p.initialized || p.closed || previous == message {
+		return
+	}
+	event := of.Event{ProviderName: "Featurevisor", EventType: of.ProviderReady}
+	if message != "" {
+		event.EventType = of.ProviderError
+		event.Message = message
+		event.ErrorCode = of.ParseErrorCode
+	}
+	// Keep the latest health when the consumer has not read the previous update.
+	select {
+	case <-p.events:
+	default:
+	}
+	p.events <- event
 }
 
 func (p *Provider) Featurevisor() *featurevisor.Featurevisor { return p.featurevisor }
 func (p *Provider) Metadata() of.Metadata                    { return of.Metadata{Name: "Featurevisor"} }
 func (p *Provider) Hooks() []of.Hook                         { return nil }
-func (p *Provider) Init(of.EvaluationContext) error          { return nil }
+func (p *Provider) EventChannel() <-chan of.Event            { return p.events }
+func (p *Provider) Init(of.EvaluationContext) error {
+	p.errorMu.Lock()
+	defer p.errorMu.Unlock()
+	p.initialized = true
+	if p.datafileError != "" {
+		return of.NewParseErrorResolutionError(p.datafileError)
+	}
+	return nil
+}
 func (p *Provider) Shutdown() {
+	p.errorMu.Lock()
+	if p.closed {
+		p.errorMu.Unlock()
+		return
+	}
+	p.closed = true
+	p.errorMu.Unlock()
 	if p.datafileUnsubscribe != nil {
 		p.datafileUnsubscribe()
+	}
+	if p.errorUnsubscribe != nil {
+		p.errorUnsubscribe()
 	}
 	if p.ownsFeaturevisor {
 		p.featurevisor.Close()
@@ -132,6 +177,9 @@ func (p *Provider) IntEvaluation(_ context.Context, flag string, defaultValue in
 	resolved, ok := asInt(value)
 	if !ok {
 		resolved = defaultValue
+		if detail.Error() == nil {
+			detail = typeMismatchWithMetadata(flag, "integer", detail.FlagMetadata)
+		}
 	}
 	return of.IntResolutionDetail{Value: resolved, ProviderResolutionDetail: detail}
 }
@@ -145,12 +193,15 @@ func (p *Provider) ObjectEvaluation(_ context.Context, flag string, defaultValue
 }
 
 func (p *Provider) resolve(flag string, defaultValue any, flatCtx of.FlattenedContext, expected string) (any, of.ProviderResolutionDetail) {
-	if p.datafileError != "" {
-		return defaultValue, errorDetail(of.NewParseErrorResolutionError(p.datafileError))
+	p.errorMu.RLock()
+	datafileError := p.datafileError
+	p.errorMu.RUnlock()
+	if datafileError != "" {
+		return defaultValue, errorDetail(of.NewParseErrorResolutionError(datafileError))
 	}
 	featureKey, selector := splitKey(flag, p.keySeparator)
 	context := normalizeContext(flatCtx)
-	if targetingKey, ok := flatCtx[of.TargetingKey].(string); ok && targetingKey != "" {
+	if targetingKey, ok := flatCtx[of.TargetingKey].(string); ok {
 		context[p.targetingKeyField] = targetingKey
 	}
 
@@ -159,7 +210,7 @@ func (p *Provider) resolve(flag string, defaultValue any, flatCtx of.FlattenedCo
 	if featureKey == p.globalVariablePrefix && selector != "" {
 		evaluation = p.featurevisor.EvaluateGlobalVariable(selector, context, featurevisor.OverrideOptions{})
 		value = evaluation.VariableValue
-		if evaluation.GlobalVariable != nil && evaluation.GlobalVariable.Type == featurevisor.VariableTypeJSON {
+		if evaluation.GlobalVariable != nil && evaluation.GlobalVariable.Type == featurevisor.VariableTypeJSON && evaluation.GlobalVariable.Compose == nil {
 			if raw, ok := value.(string); ok {
 				var parsed any
 				if json.Unmarshal([]byte(raw), &parsed) == nil {
@@ -264,13 +315,13 @@ func reasonFor(reason featurevisor.EvaluationReason) of.Reason {
 	switch reason {
 	case featurevisor.EvaluationReasonFeatureNotFound, featurevisor.EvaluationReasonVariableNotFound, featurevisor.EvaluationReasonNoVariations, featurevisor.EvaluationReasonError:
 		return of.ErrorReason
-	case featurevisor.EvaluationReasonRequired, featurevisor.EvaluationReasonForced, featurevisor.EvaluationReasonSticky, featurevisor.EvaluationReasonRule, featurevisor.EvaluationReasonVariableOverrideVariation, featurevisor.EvaluationReasonVariableOverrideRule:
+	case featurevisor.EvaluationReasonVariableComposed, featurevisor.EvaluationReasonForced, featurevisor.EvaluationReasonSticky, featurevisor.EvaluationReasonRule, featurevisor.EvaluationReasonVariableOverrideVariation, featurevisor.EvaluationReasonVariableOverrideRule:
 		return of.TargetingMatchReason
 	case featurevisor.EvaluationReasonAllocated:
 		return of.SplitReason
 	case featurevisor.EvaluationReasonDisabled, featurevisor.EvaluationReasonVariationDisabled, featurevisor.EvaluationReasonVariableDisabled:
 		return of.DisabledReason
-	case featurevisor.EvaluationReasonRequiredFeaturesUnmet:
+	case featurevisor.EvaluationReasonConditionsUnmet:
 		return of.DisabledReason
 	default:
 		return of.DefaultReason
@@ -357,7 +408,10 @@ func asInt(value any) (int64, bool) {
 	case int64:
 		return v, true
 	case float64:
-		return int64(v), math.Trunc(v) == v && !math.IsInf(v, 0) && !math.IsNaN(v)
+		if math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v || v < -9223372036854775808 || v >= 9223372036854775808 {
+			return 0, false
+		}
+		return int64(v), true
 	case json.Number:
 		n, err := v.Int64()
 		return n, err == nil

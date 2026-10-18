@@ -1,9 +1,41 @@
 package featurevisor
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 )
+
+func TestLateTrafficAndAllocationKeepFirstMatchAndValueOwnership(t *testing.T) {
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
+		Datafile:           DatafileContent{SchemaVersion: "2", Revision: "late", Segments: map[SegmentKey]Segment{}},
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{}),
+	})
+	traffic := make([]Traffic, 128)
+	for index := range traffic {
+		traffic[index] = Traffic{Key: RuleKey(fmt.Sprintf("rule-%d", index)), Segments: "missing"}
+	}
+	traffic[126].Segments = "*"
+	traffic[127].Segments = "*"
+	traffic[126].Allocation = make([]Allocation, 128)
+	for index := range traffic[126].Allocation {
+		traffic[126].Allocation[index] = Allocation{Variation: VariationValue(fmt.Sprintf("variation-%d", index)), Range: Range{index, index}}
+	}
+
+	matched := reader.GetMatchedTraffic(traffic, Context{})
+	if matched == nil || matched.Key != "rule-126" {
+		t.Fatalf("expected first late rule, got %#v", matched)
+	}
+	allocation := reader.GetMatchedAllocation(matched, 127)
+	if allocation == nil || allocation.Variation != "variation-127" {
+		t.Fatalf("expected last allocation, got %#v", allocation)
+	}
+	matched.Key = "caller-change"
+	allocation.Variation = "caller-change"
+	if traffic[126].Key != "rule-126" || traffic[126].Allocation[127].Variation != "variation-127" {
+		t.Fatal("matched metadata aliased candidate structs")
+	}
+}
 
 func TestConcurrentConditionEvaluationsShareRegexCacheSafely(t *testing.T) {
 	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
@@ -746,6 +778,171 @@ func TestInstanceEvaluationDataProviderStringifiedParsing(t *testing.T) {
 			t.Error("Should have two segments")
 		}
 	})
+}
+
+func TestInstanceEvaluationDataProviderCachesStringifiedExpressionsPerGeneration(t *testing.T) {
+	condition := `[{"attribute":"country","operator":"equals","value":"us"}]`
+	datafile := DatafileContent{
+		SchemaVersion: "2",
+		Revision:      "cached",
+		Segments: map[SegmentKey]Segment{
+			"country": {Conditions: condition},
+		},
+		Features: map[FeatureKey]Feature{},
+	}
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
+		Datafile:           datafile,
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{}),
+	})
+
+	for index := 0; index < 2; index++ {
+		if !reader.AllSegmentsAreMatched("country", Context{"country": "us"}) {
+			t.Fatal("expected cached segment condition to match")
+		}
+	}
+	if count := len(reader.entities); count != 1 {
+		t.Fatalf("expected one normalized segment entity, got %d", count)
+	}
+
+	group := `["country"]`
+	for index := 0; index < 2; index++ {
+		if !reader.AllSegmentsAreMatched(reader.parseSegmentsIfStringified(group), Context{"country": "us"}) {
+			t.Fatal("expected cached segment group to match")
+		}
+	}
+	if count := reader.getCachedExpressionCount(); count != 1 {
+		t.Fatalf("expected the legacy helper segment expression in its cache, got %d", count)
+	}
+
+	replacement := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
+		Datafile:           datafile,
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{}),
+	})
+	if count := replacement.getCachedExpressionCount(); count != 0 {
+		t.Fatalf("expected a fresh provider generation to start with an empty cache, got %d", count)
+	}
+}
+
+func TestInstanceEvaluationDataProviderExpressionCacheIsConcurrent(t *testing.T) {
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "concurrent-expressions",
+			Segments:      map[SegmentKey]Segment{},
+			Features:      map[FeatureKey]Feature{},
+		},
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{}),
+	})
+	expression := `[{"attribute":"country","operator":"equals","value":"us"}]`
+
+	var waitGroup sync.WaitGroup
+	for index := 0; index < 100; index++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			parsed := reader.parseConditionsIfStringified(expression)
+			if !reader.AllConditionsAreMatched(parsed, Context{"country": "us"}) {
+				t.Error("expected parsed condition to match")
+			}
+		}()
+	}
+	waitGroup.Wait()
+
+	if count := reader.getCachedExpressionCount(); count != 1 {
+		t.Fatalf("expected one shared cached expression, got %d", count)
+	}
+}
+
+func TestGetSegmentKeepsParsedConditionOwnership(t *testing.T) {
+	condition := `[{"attribute":"country","operator":"equals","value":"us"}]`
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "ownership",
+			Segments: map[SegmentKey]Segment{
+				"country": {Conditions: condition},
+			},
+			Features: map[FeatureKey]Feature{},
+		},
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{}),
+	})
+
+	first := reader.GetSegment("country")
+	firstConditions := first.Conditions.([]interface{})
+	firstConditions[0].(map[string]interface{})["value"] = "nl"
+
+	second := reader.GetSegment("country")
+	secondConditions := second.Conditions.([]interface{})
+	if value := secondConditions[0].(map[string]interface{})["value"]; value != "us" {
+		t.Fatalf("expected each public segment result to own its parsed conditions, got %#v", value)
+	}
+}
+
+func TestDiagnosticPayloadCannotMutateCachedExpression(t *testing.T) {
+	var handler diagnosticOutputHandler = func(_ LogLevel, _ logMessage, details logDetails) {
+		if segments, ok := details["segments"].(map[string]interface{}); ok {
+			segments["or"] = []interface{}{"allowed"}
+		}
+	}
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
+		Datafile: DatafileContent{
+			SchemaVersion: "2",
+			Revision:      "diagnostic-ownership",
+			Segments: map[SegmentKey]Segment{
+				"allowed": {Conditions: "*"},
+			},
+			Features: map[FeatureKey]Feature{},
+		},
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{Handler: &handler}),
+	})
+	segments := reader.parseSegmentsIfStringified(`{"unexpected":[]}`)
+
+	if reader.AllSegmentsAreMatched(segments, Context{}) {
+		t.Fatal("expected unknown segment expression to remain unmatched")
+	}
+	if reader.AllSegmentsAreMatched(segments, Context{}) {
+		t.Fatal("expected diagnostic callback mutation not to change a cached decision")
+	}
+}
+
+func TestExpressionCacheIsReleasedWhenClosed(t *testing.T) {
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
+		Datafile:           DatafileContent{SchemaVersion: "2", Revision: "close", Segments: map[SegmentKey]Segment{}, Features: map[FeatureKey]Feature{}},
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{}),
+	})
+	expression := `[{"attribute":"country","operator":"equals","value":"nl"}]`
+	reader.parseConditionsIfStringified(expression)
+	reader.closeExpressionCache()
+
+	if count := reader.getCachedExpressionCount(); count != 0 {
+		t.Fatalf("expected close to release cached expressions, got %d", count)
+	}
+	reader.parseConditionsIfStringified(expression)
+	if count := reader.getCachedExpressionCount(); count != 0 {
+		t.Fatalf("expected parsing after close not to retain expressions, got %d", count)
+	}
+}
+
+func TestExpressionCacheDoesNotRetainParseErrors(t *testing.T) {
+	reported := 0
+	var handler diagnosticOutputHandler = func(level LogLevel, _ logMessage, _ logDetails) {
+		if level == LogLevelError {
+			reported++
+		}
+	}
+	reader := newInstanceEvaluationDataProvider(instanceEvaluationDataProviderOptions{
+		Datafile:           DatafileContent{SchemaVersion: "2", Revision: "invalid", Segments: map[SegmentKey]Segment{}, Features: map[FeatureKey]Feature{}},
+		diagnosticReporter: newDiagnosticReporter(diagnosticReporterOptions{Handler: &handler}),
+	})
+
+	reader.parseConditionsIfStringified(`[{`)
+	reader.parseConditionsIfStringified(`[{`)
+	if reported != 2 {
+		t.Fatalf("expected every malformed parse to report an error, got %d", reported)
+	}
+	if count := reader.getCachedExpressionCount(); count != 0 {
+		t.Fatalf("expected malformed expressions not to be retained, got %d", count)
+	}
 }
 
 func TestInstanceEvaluationDataProviderErrorHandling(t *testing.T) {

@@ -1,17 +1,15 @@
 # Featurevisor Go SDK <!-- omit in toc -->
 
-This is a port of Featurevisor [Javascript SDK](https://featurevisor.com/docs/sdks/javascript/) v3.x to Go, providing a way to evaluate feature flags, variations, and variables in your Go applications.
+Use the Featurevisor Go SDK to evaluate flags, variations and variables in Go applications.
 
-This SDK is compatible with [Featurevisor](https://featurevisor.com/) v3.0 projects (and also v2 datafiles).
-
-See example application [here](https://github.com/featurevisor/featurevisor-example-go).
+See the [Go example application](https://github.com/featurevisor/featurevisor-example-go).
 
 ## Table of contents <!-- omit in toc -->
 
 - [Installation](#installation)
-- [Public API](#public-api)
 - [Initialization](#initialization)
-- [Evaluation types](#evaluation-types)
+  - [Public API](#public-api)
+  - [Evaluation types](#evaluation-types)
 - [Context](#context)
   - [Setting initial context](#setting-initial-context)
   - [Setting after initialization](#setting-after-initialization)
@@ -20,10 +18,13 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
 - [Check if enabled](#check-if-enabled)
 - [Getting variation](#getting-variation)
 - [Getting variables](#getting-variables)
+  - [Getting feature variables](#getting-feature-variables)
   - [Type specific methods](#type-specific-methods)
-- [Getting global variables](#getting-global-variables)
-- [Getting all evaluations](#getting-all-evaluations)
-- [Sticky features and variables](#sticky-features-and-variables)
+  - [Getting global variables](#getting-global-variables)
+- [Conditions](#conditions)
+- [Composition](#composition)
+- [Getting evaluations](#getting-evaluations)
+- [Sticky](#sticky)
   - [Initialize with sticky](#initialize-with-sticky)
   - [Set sticky afterwards](#set-sticky-afterwards)
 - [Setting datafile](#setting-datafile)
@@ -52,6 +53,7 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
   - [Test](#test)
   - [Benchmark](#benchmark)
   - [Assess distribution](#assess-distribution)
+- [GitHub repositories](#github-repositories)
 - [Development of this package](#development-of-this-package)
   - [Setting up](#setting-up)
   - [Running tests](#running-tests)
@@ -62,25 +64,13 @@ See example application [here](https://github.com/featurevisor/featurevisor-exam
 
 ## Installation
 
+Upgrading an existing application? Follow the [Go migration guide](https://featurevisor.com/docs/migrations/v4/go/).
+
 In your Go application, install the SDK using Go modules:
 
 ```bash
-go get github.com/featurevisor/featurevisor-go/v3
+go get github.com/featurevisor/featurevisor-go/v4
 ```
-
-## Public API
-
-The main runtime API is `featurevisor.CreateFeaturevisor()`:
-
-```go
-f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
-    Datafile: datafileContent,
-})
-```
-
-Most applications only need `CreateFeaturevisor`, the `Featurevisor` instance type, and `FeaturevisorOptions`. Public extension and observability types include `FeaturevisorModule`, `FeaturevisorDiagnostic`, and the datafile model types.
-
-Concurrent evaluations are safe after an instance is configured. Do not call state-changing methods such as `SetDatafile`, `SetContext`, `SetStickyFeatures`, `SetStickyVariables`, `AddModule`, `RemoveModule`, or `Close` concurrently with evaluations or with each other. Apply those changes from a serialized update path. Module, event, and diagnostic callbacks must synchronize mutable state that they capture.
 
 ## Initialization
 
@@ -90,20 +80,24 @@ The SDK can be initialized by passing [datafile](https://featurevisor.com/docs/b
 package main
 
 import (
+    "fmt"
     "io"
     "net/http"
 
-    "github.com/featurevisor/featurevisor-go/v3"
+    "github.com/featurevisor/featurevisor-go/v4"
 )
 
 func main() {
-    datafileURL := "https://cdn.yoursite.com/datafile.json"
+    datafileURL := "https://cdn.yoursite.com/featurevisor-all.json"
 
     resp, err := http.Get(datafileURL)
     if err != nil {
         panic(err)
     }
     defer resp.Body.Close()
+    if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+        panic(fmt.Errorf("datafile request failed: %s", resp.Status))
+    }
 
     datafileBytes, err := io.ReadAll(resp.Body)
     if err != nil {
@@ -118,24 +112,44 @@ func main() {
     f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
         Datafile: datafileContent,
     })
+    defer f.Close()
+
+    fmt.Println(f.IsEnabled("checkout", featurevisor.Context{"userId": "123"}))
 }
 ```
 
-## Evaluation types
+### Public API
 
-We can evaluate 3 types of values against a particular [feature](https://featurevisor.com/docs/features/):
+The main runtime API is `featurevisor.CreateFeaturevisor()`:
+
+```go
+f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
+    Datafile: datafileContent,
+})
+```
+
+Most applications only need `CreateFeaturevisor`, the `Featurevisor` instance type, and `FeaturevisorOptions`. Public extension and observability types include `FeaturevisorModule`, `FeaturevisorDiagnostic`, and the datafile model types.
+
+Concurrent evaluations are safe after an instance is configured. Do not call state-changing methods such as `SetDatafile`, `SetContext`, `SetStickyFeatures`, `SetStickyVariables`, `AddModule`, `RemoveModule`, or `Close` concurrently with evaluations or with each other. Apply those changes from a serialized update path. Module, event, and diagnostic callbacks must synchronize mutable state that they capture.
+
+### Evaluation types
+
+Featurevisor evaluates four kinds of values:
 
 - [**Flag**](#check-if-enabled) (`bool`): whether the feature is enabled or not
 - [**Variation**](#getting-variation) (`string`): the variation of the feature (if any)
-- [**Variables**](#getting-variables): variable values of the feature (if any)
+- [**Feature variable**](#getting-feature-variables): a configuration value owned by a feature
+- [**Global variable**](#getting-global-variables): a configuration value evaluated independently of a feature
 
 These evaluations are run against the provided context.
 
 ## Context
 
-Contexts are [attribute](https://featurevisor.com/docs/attributes) values that we pass to SDK for evaluating [features](https://featurevisor.com/docs/features) against.
+Contexts are [attribute](https://featurevisor.com/docs/attributes) values you pass to the SDK for evaluating [features](https://featurevisor.com/docs/features) against.
 
-Think of the conditions that you define in your [segments](https://featurevisor.com/docs/segments/), which are used in your feature's [rules](https://featurevisor.com/docs/features/#rules).
+Conditions compare these attributes using the [operators](https://featurevisor.com/docs/operators/), including `empty` and `notEmpty`.
+
+Date comparisons accept portable timestamp strings and `time.Time`. Offsets must stay within 14 hours and both local and UTC years within 0001 to 9999. Fractions are truncated to milliseconds. The zero `time.Time{}` is a valid year 0001 instant, not a missing date. Omit the context entry or use a nil pointer for an unknown date.
 
 They are plain maps:
 
@@ -147,15 +161,13 @@ context := featurevisor.Context{
 }
 ```
 
-Context can be passed to SDK instance in various different ways, depending on your needs:
-
 ### Setting initial context
 
-You can set context at the time of initialization:
+Set context when you create the instance:
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/v3"
+    "github.com/featurevisor/featurevisor-go/v4"
 )
 
 f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
@@ -170,7 +182,7 @@ This is useful for values that don't change too frequently and available at the 
 
 ### Setting after initialization
 
-You can also set more context after the SDK has been initialized:
+Add context later:
 
 ```go
 f.SetContext(featurevisor.Context{
@@ -182,7 +194,7 @@ This will merge the new context with the existing one (if already set).
 
 ### Replacing existing context
 
-If you wish to fully replace the existing context, you can pass `true` in second argument:
+Replace the context by passing `true` as the second argument:
 
 ```go
 f.SetContext(featurevisor.Context{
@@ -195,7 +207,7 @@ f.SetContext(featurevisor.Context{
 
 ### Manually passing context
 
-You can optionally pass additional context manually for each and every evaluation separately, without needing to set it to the SDK instance affecting all evaluations:
+Pass context to one evaluation without changing the instance context:
 
 ```go
 context := featurevisor.Context{
@@ -203,21 +215,19 @@ context := featurevisor.Context{
     "country": "nl",
 }
 
-isEnabled := f.IsEnabled("my_feature", context)
-variation := f.GetVariation("my_feature", context)
-variableValue := f.GetVariable("my_feature", "my_variable", context)
+isEnabled := f.IsEnabled("checkout", context)
+variation := f.GetVariation("checkout", context)
+variableValue := f.GetVariable("checkout", "bgColor", context)
 ```
 
 When manually passing context, it will merge with existing context set to the SDK instance before evaluating the specific value.
 
-Further details for each evaluation types are described below.
-
 ## Check if enabled
 
-Once the SDK is initialized, you can check if a feature is enabled or not:
+Check whether a feature is enabled:
 
 ```go
-featureKey := "my_feature"
+featureKey := "checkout"
 
 isEnabled := f.IsEnabled(featureKey)
 
@@ -226,7 +236,7 @@ if isEnabled {
 }
 ```
 
-You can also pass additional context per evaluation:
+Pass additional context to one evaluation:
 
 ```go
 isEnabled := f.IsEnabled(featureKey, featurevisor.Context{
@@ -236,10 +246,10 @@ isEnabled := f.IsEnabled(featureKey, featurevisor.Context{
 
 ## Getting variation
 
-If your feature has any [variations](https://featurevisor.com/docs/features/#variations) defined, you can evaluate them as follows:
+Evaluate a feature's [variations](https://featurevisor.com/docs/features/#variations):
 
 ```go
-featureKey := "my_feature"
+featureKey := "checkout"
 
 variation := f.GetVariation(featureKey)
 
@@ -250,7 +260,7 @@ if variation != nil && *variation == "treatment" {
 }
 ```
 
-Additional context per evaluation can also be passed:
+Pass additional context to one evaluation:
 
 ```go
 variation := f.GetVariation(featureKey, featurevisor.Context{
@@ -260,18 +270,20 @@ variation := f.GetVariation(featureKey, featurevisor.Context{
 
 ## Getting variables
 
-Your features may also include [variables](https://featurevisor.com/docs/features/#variables), which can be evaluated as follows:
+### Getting feature variables
+
+Evaluate a feature's [variables](https://featurevisor.com/docs/features/#variables):
 
 ```go
 variableKey := "bgColor"
 
-bgColorValue := f.GetVariable("my_feature", variableKey)
+bgColorValue := f.GetVariable("checkout", variableKey)
 ```
 
-Additional context per evaluation can also be passed:
+Pass additional context to one evaluation:
 
 ```go
-bgColorValue := f.GetVariable("my_feature", variableKey, featurevisor.Context{
+bgColorValue := f.GetVariable("checkout", variableKey, featurevisor.Context{
     // ...additional context
 })
 ```
@@ -304,9 +316,9 @@ _ = f.GetVariableObjectInto(featureKey, variableKey, context, &cfg)
 
 `context` and `OverrideOptions` are optional and can be passed before the output pointer.
 
-## Getting global variables
+### Getting global variables
 
-Global variables are independent configuration values. Go uses explicit method names because it does not support method overloading:
+Global variables are independent configuration values. Go uses separate method names because it does not support method overloading:
 
 ```go
 supportEmail := f.GetGlobalVariableString("supportEmail", context)
@@ -314,18 +326,81 @@ settings := f.GetGlobalVariableObject("checkoutSettings", context)
 evaluation := f.EvaluateGlobalVariable("supportEmail", context)
 ```
 
-The complete family includes `GetGlobalVariable`, the Boolean, string, integer, double, array, object, and JSON helpers, `GetGlobalVariableKeys`, and `GetVariableEvaluations`. Global variables support sticky values, `requiredFeatures`, ordered overrides, detailed override keys and paths, and caller defaults through `OverrideOptions`.
+The complete family includes `GetGlobalVariable`, the Boolean, string, integer, double, array, object and JSON helpers, `GetGlobalVariableKeys`, and `GetVariableEvaluations`. Overrides and conditions are applied for you. See [Variables](https://featurevisor.com/docs/variables/#global-variables) and [Conditions](https://featurevisor.com/docs/conditions/) for how to define them.
 
-## Getting all evaluations
+Modules should return the same result for the same input during one evaluation. Pass values that change through context.
 
-You can get evaluations of all features available in the SDK instance:
+To see which overrides changed a value, read `VariableOverridePaths` from `EvaluateGlobalVariable`. The singular override fields describe the final match.
+
+## Conditions
+
+[Conditions](https://featurevisor.com/docs/conditions/) are shared by segments, feature and global variable gates, force entries, traffic rules and variable overrides. Generated v4 datafiles use schema version `"4"`. Arrays imply AND. Groups use `and`, `or` and `not`. NOT negates the AND of its direct children. Empty expressions are false.
+
+Leaves compare context attributes, reference a segment by its literal string key, check a feature's enabled state and optional variation, or compare an evaluated variable. Feature enabled checks default to true. Variable leaves may name a feature owner and use compiled path arrays such as `["items", 0, "enabled"]`. Dots in variable keys remain literal. Attribute and variable comparisons use the same operators.
+
+For example, a compiled root gate can combine all four leaf kinds:
+
+```json
+{
+  "conditions": [
+    {"attribute": "country", "operator": "equals", "value": "nl"},
+    "eligibleAudience",
+    {"feature": "checkout", "variation": "treatment"},
+    {"variable": "policy", "path": ["enabled"], "operator": "equals", "value": true}
+  ]
+}
+```
+
+Continue using the ordinary getters:
+
+```go
+enabled := f.IsEnabled("checkout", featurevisor.Context{"country": "nl"})
+policy := f.GetGlobalVariable("policy")
+```
+
+Feature evaluation checks sticky state, then force, then its root gate and traffic rules. Force bypasses the gate. Global variables check sticky state and their gate before reading sources or applying overrides. A missed root gate reports `conditions_unmet` and `Evaluation.Conditions`. Variation and feature variable evaluations retain their ordinary disabled reasons and fallbacks.
+
+Dependencies share the current evaluation session and a combined depth limit of 256 internal handoffs. Cycles and excessive depth fail the whole evaluation. A later independent call starts a fresh session. Ordinary completed false or null source getter results remain values.
+
+## Composition
+
+[Composed variables](https://featurevisor.com/docs/variables/) read other values through ordinary getters with the effective context, modules and sticky state. The list form creates one fresh outer object with literal property names:
+
+```json
+{
+  "type": "object",
+  "compose": [
+    {"key": "enabled", "feature": "checkout"},
+    {"key": "assignment", "feature": "checkout", "variation": true},
+    {"key": "title", "feature": "checkout", "variable": "title"},
+    {"key": "policy", "variable": "policy"}
+  ]
+}
+```
+
+The string form, `"compose": "policy"`, is an alias of that literal global variable key. It returns the source value directly, including false, zero, empty strings, arrays and null. JSON sources are decoded exactly once, even when the decoded string resembles JSON.
+
+```go
+screen := f.GetGlobalVariable("screen", featurevisor.Context{"country": "nl"})
+details := f.EvaluateGlobalVariable("screen")
+```
+
+Compositions have no `defaultValue` or `useDefaultWhenDisabled`. They may have root `conditions` and `disabledValue`. An unmet gate skips every source and override, returning the disabled value or null. Whole variable sticky state bypasses both assembly and overrides. An explicit caller default is never forwarded to a source getter.
+
+All sources are read before runtime overrides. Overrides use the ordinary mutation interpreter and provenance fields. The reason is `variable_composed`, or `variable_override_rule` when an override matches. Mutation paths copy changed containers without modifying sources, sibling properties or sticky values.
+
+Treat returned objects and arrays as read only. Composition properties and aliases retain ordinary getter ownership. Descendants may be shared. Only the map composition's outer object is guaranteed to be fresh. Source getter failures retain ordinary fallbacks, while dependency cycles and depth failures invalidate the whole composition.
+
+## Getting evaluations
+
+Evaluate all features available in the instance:
 
 ```go
 allEvaluations := f.GetFeatureEvaluations(featurevisor.Context{}, nil, featurevisor.OverrideOptions{})
 
 fmt.Printf("%+v\n", allEvaluations)
 // {
-//   myFeature: {
+//   checkout: {
 //     enabled: true,
 //     variation: "control",
 //     variables: {
@@ -342,22 +417,24 @@ fmt.Printf("%+v\n", allEvaluations)
 
 This is handy especially when you want to pass all evaluations from a backend application to the frontend.
 
-## Sticky features and variables
+## Sticky
 
-For the lifecycle of the SDK instance in your application, you can set some features with sticky values, meaning that they will not be evaluated against the fetched [datafile](https://featurevisor.com/docs/building-datafiles/):
+Set sticky values to take precedence over feature evaluation against the [datafile](https://featurevisor.com/docs/building-datafiles/):
 
 Sticky values belong to an SDK or child instance. Evaluation options do not accept sticky overrides. Child sticky maps replace parent sticky state rather than inheriting it.
+
+Treat supplied sticky maps and their nested values as read only after handoff. Use the instance or child sticky setters to change them. Mutating a supplied map in place is not supported.
 
 ### Initialize with sticky
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/v3"
+    "github.com/featurevisor/featurevisor-go/v4"
 )
 
 f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
     StickyFeatures: &featurevisor.StickyFeatures{
-        "myFeatureKey": {
+        "checkout": {
             Enabled: true,
             // optional
             Variation: func() *featurevisor.VariationValue {
@@ -379,11 +456,11 @@ Once initialized with sticky features, the SDK will look for values there first 
 
 ### Set sticky afterwards
 
-You can also set sticky features after the SDK is initialized:
+Set sticky features after initialization:
 
 ```go
 f.SetStickyFeatures(featurevisor.StickyFeatures{
-    "myFeatureKey": {
+    "checkout": {
         Enabled: true,
         Variation: func() *featurevisor.VariationValue {
             v := featurevisor.VariationValue("treatment")
@@ -413,15 +490,23 @@ f.SetDatafile(datafileContent)
 
 `SetDatafile` accepts either parsed `featurevisor.DatafileContent` or a raw JSON string.
 
+Schema version `"2"` selectors are normalized eagerly before merging. V4 entities are normalized lazily on first read. Informational schema metadata is retained. Partial updates invalidate only incoming entities, while replacement clears normalized caches. Caller definitions are never changed. Keep supplied datafiles read only after handoff.
+
+It returns `true` when the datafile is accepted, including unchanged content, and `false` when the input is rejected or the instance is closed. Rejected input leaves the last accepted datafile in place and reports the existing diagnostic and error event, without a `datafile_set` event. Calls after closing do nothing. Accepted calls still emit `datafile_set`, even when nothing changed. The return value reports acceptance, not whether any features changed.
+
+```go
+accepted := f.SetDatafile(datafileContent)
+```
+
 ### Merging by default
 
 By default, `SetDatafile(datafile)` merges the incoming datafile with the SDK instance's existing datafile:
 
-- incoming `Features` and `Segments` override matching keys
-- existing `Features` and `Segments` that are missing from the incoming datafile are kept
+- incoming `Features`, `Segments`, and global `Variables` override matching keys
+- existing `Features`, `Segments`, and global `Variables` that are missing from the incoming datafile are kept
 - `Revision`, `SchemaVersion`, and `FeaturevisorVersion` are taken from the incoming datafile
 
-This means you can call `SetDatafile` more than once with different datafiles, and the SDK instance accumulates their features, segments, and global variables together.
+Call `SetDatafile` with different datafiles to merge their features, segments, and global variables.
 
 ### Replacing
 
@@ -433,38 +518,18 @@ f.SetDatafile(datafileContent, true) // replace existing datafile
 
 ### Loading datafiles on demand
 
-Because merging is the default, a single SDK instance can start with a small datafile and load more datafiles later as your application needs them, instead of downloading every feature upfront.
-
-This pairs well with [targets](https://featurevisor.com/docs/targets/), where each target produces a smaller datafile for a specific part of your application:
+Merge datafiles for different [targets](https://featurevisor.com/docs/targets/) into the same instance. Here, the two datafile values have already been loaded and validated by your application from the same published release:
 
 ```go
-f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{})
-
-func loadDatafile(target string) {
-    url := fmt.Sprintf("https://cdn.yoursite.com/production/featurevisor-%s.json", target)
-    resp, err := http.Get(url)
-    if err != nil {
-        return
-    }
-    defer resp.Body.Close()
-
-    datafileBytes, err := io.ReadAll(resp.Body)
-    if err != nil {
-        return
-    }
-
-    f.SetDatafile(string(datafileBytes))
-}
-
-loadDatafile("products")
-
-// later, when the user reaches checkout
-loadDatafile("checkout")
+f.SetDatafile(productsDatafile)
+f.SetDatafile(checkoutDatafile)
 ```
+
+Use immutable release URLs, check HTTP responses and keep shared dependencies consistent. See [Loading datafiles on demand](https://featurevisor.com/docs/use-cases/on-demand-datafiles/) for the complete loading and refresh flow.
 
 ### Updating datafile
 
-You can set the datafile as many times as you want in your application, which will result in emitting a [`datafile_set`](#datafile-set) event that you can listen and react to accordingly.
+Each accepted datafile update emits a [`datafile_set`](#datafile-set) event. Subscribe to react to updates.
 
 The triggers for setting the datafile again can be:
 
@@ -475,7 +540,7 @@ The triggers for setting the datafile again can be:
 
 ### Interval-based update
 
-Here's an example of using interval-based update:
+Replace the complete datafile on each refresh so definitions removed upstream are removed from the SDK too. Use merging only when loading partial datafiles intentionally.
 
 ```go
 import (
@@ -483,7 +548,7 @@ import (
     "io"
     "net/http"
 
-    "github.com/featurevisor/featurevisor-go/v3"
+    "github.com/featurevisor/featurevisor-go/v4"
 )
 
 func updateDatafile(f *featurevisor.Featurevisor, datafileURL string) {
@@ -495,10 +560,9 @@ func updateDatafile(f *featurevisor.Featurevisor, datafileURL string) {
         if err != nil {
             continue
         }
-        defer resp.Body.Close()
-
         datafileBytes, err := io.ReadAll(resp.Body)
-        if err != nil {
+        resp.Body.Close()
+        if err != nil || resp.StatusCode != http.StatusOK {
             continue
         }
 
@@ -507,7 +571,7 @@ func updateDatafile(f *featurevisor.Featurevisor, datafileURL string) {
             continue
         }
 
-        f.SetDatafile(datafileContent)
+        f.SetDatafile(datafileContent, true) // replace
     }
 }
 
@@ -551,13 +615,15 @@ Modules can also subscribe to diagnostics or report their own from `Setup` via t
 
 Every diagnostic has `Level`, `Code`, `Message`, and an object-shaped `Details` map. Optional `Module`, `ModuleName`, and `OriginalError` fields describe provenance. Evaluation metadata belongs in `Details`.
 
+Malformed stringified selectors report `conditions_parse_error` at error level once per selector per incoming entity load. Details contain exactly `conditions` with the original string, `entityType` and `entityKey`. Schema 2 diagnostics run after accepted datafile storage. V4 diagnostics run after caching the first entity read. Handlers may safely read the accepted revision again. A malformed selector fails locally, even through NOT or segment references, without rejecting the datafile or disabling unrelated entities.
+
 Diagnostic handlers are isolated from SDK behaviour. A panic in a handler does not stop other handlers or evaluations.
 
 ## Events
 
-Featurevisor SDK implements a simple event emitter that allows you to listen to events that happen in the runtime.
+Subscribe to SDK events to respond to context, sticky state and datafile changes.
 
-You can listen to these events that can occur at various stages in your application:
+Subscribe to instance lifecycle events:
 
 ### `datafile_set`
 
@@ -579,7 +645,7 @@ unsubscribe := f.On(featurevisor.EventNameDatafileSet, func(details featurevisor
 unsubscribe()
 ```
 
-The `features` and `variables` arrays include entities changed directly or affected through segment and required feature dependencies.
+The `features` and `variables` arrays include direct changes and transitive dependencies through conditions, segments and composition sources, including additions and removals.
 
 - added, or
 - updated, or
@@ -609,6 +675,16 @@ unsubscribe := f.On(featurevisor.EventNameStickyFeaturesSet, func(details featur
 })
 ```
 
+### `sticky_variables_set`
+
+```go
+unsubscribe := f.On(featurevisor.EventNameStickyVariablesSet, func(details featurevisor.EventDetails) {
+    variables := details["variables"]
+    replaced := details["replaced"]
+    fmt.Println(variables, replaced)
+})
+```
+
 ### `error`
 
 ```go
@@ -622,7 +698,7 @@ The `error` event is emitted for diagnostics whose level is `error`.
 
 ## Evaluation details
 
-Besides logging with debug level enabled, you can also get more details about how the feature variations and variables are evaluated in the runtime against given context:
+Inspect how variations and variables are evaluated against a context:
 
 ```go
 // flag
@@ -637,7 +713,8 @@ evaluation := f.EvaluateVariable(featureKey, variableKey, context)
 
 The returned object will always contain the following properties:
 
-- `FeatureKey`: the feature key
+- `Type`: flag, variation or variable
+- `FeatureKey`: the feature key when the evaluation has a feature owner
 - `Reason`: the reason how the value was evaluated
 
 And optionally these properties depending on whether you are evaluating a feature variation or a variable:
@@ -652,14 +729,24 @@ And optionally these properties depending on whether you are evaluating a featur
 - `VariableValue`: the variable value
 - `VariableSchema`: the variable schema
 - `VariableOverrideIndex`: index of matched variable override when applicable
+- `Conditions`: normalized root conditions when the gate is unmet
+- `GlobalVariable`: the global variable definition when applicable
+- `StickyFeature`: the sticky feature result when applicable
+- `VariableOverrideKey`: key of the final matched variable override
+- `VariableOverridePath`: path of the final matched variable override
+- `VariableOverridePaths`: all matched accumulated override paths in execution order
 
 ## Modules
 
+The before evaluation and after evaluation phases each use the module membership at the start of that phase. Where an evaluation uses bucketing, the bucket key and bucket value phases each use their own starting membership. Adding or removing a module during a phase does not change the iteration already in progress. The next phase uses the membership then installed. A module added before the after phase can receive after callbacks for evaluations already in progress, even if it did not receive their before callbacks. A module removed before the after phase receives no after callback.
+
 Modules allow you to intercept the evaluation process and customize it further as per your needs.
 
-For feature evaluations, all `Before` callbacks run in registration order, followed by all `BeforeEvaluation` callbacks. After evaluation and caller defaults, all `AfterEvaluation` callbacks run, followed by all `After` callbacks. Global variable evaluations use only `BeforeEvaluation` and `AfterEvaluation`. Required feature checks run through the complete module pipeline, and transformed defaults are preserved.
+For every feature or global variable evaluation, all `BeforeEvaluation` callbacks run in registration order before evaluation, followed by all `AfterEvaluation` callbacks in registration order. Condition and composition dependency getters use the same pipeline. An accumulated override program is one evaluation, so callbacks wrap the complete program rather than individual operations.
 
-`Before` and `After` remain available as deprecated feature-only compatibility callbacks. Use `BeforeEvaluation` and `AfterEvaluation` for new modules so the same callbacks can handle feature and global variable evaluations.
+`EvaluateOptions.DependencyOf` and `DependencyPurpose` are absent for an application call. Internal reads identify the immediate requester through `Type`, optional `FeatureKey` and optional `VariableKey`. Purpose is `condition` for gating reads and `composition` for consumed values. Tracking modules can skip condition reads while retaining composition exposures. Conditions preserve their written order and short circuit, so put cheap comparisons first when appropriate.
+
+Equivalent dependency reads are memoized within one public call, separating purpose, requester, effective context and current SDK state. Condition snapshots are owned. Composition values keep ordinary getter ownership. Callback options do not retain private sessions. Independent public calls from callbacks start fresh sessions.
 
 ### Defining a module
 
@@ -669,7 +756,7 @@ If `Setup` panics, the module is not registered. Featurevisor removes subscripti
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/v3"
+    "github.com/featurevisor/featurevisor-go/v4"
 )
 
 myCustomModule := &featurevisor.FeaturevisorModule{
@@ -722,23 +809,13 @@ myCustomModule := &featurevisor.FeaturevisorModule{
 }
 ```
 
-### `sticky_variables_set`
-
-```go
-unsubscribe := f.On(featurevisor.EventNameStickyVariablesSet, func(details featurevisor.EventDetails) {
-    variables := details["variables"]
-    replaced := details["replaced"]
-    fmt.Println(variables, replaced)
-})
-```
-
 ### Registering modules
 
-You can register modules at the time of SDK initialization:
+Register modules when you create the instance:
 
 ```go
 import (
-    "github.com/featurevisor/featurevisor-go/v3"
+    "github.com/featurevisor/featurevisor-go/v4"
 )
 
 f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
@@ -772,12 +849,12 @@ childF := f.Spawn(featurevisor.Context{
 })
 ```
 
-Now you can pass the child instance where your individual request is being handled, and you can continue to evaluate features targeting that specific user alone:
+Pass the child instance to the request handler to evaluate features for that user:
 
 ```go
-isEnabled := childF.IsEnabled("my_feature")
-variation := childF.GetVariation("my_feature")
-variableValue := childF.GetVariable("my_feature", "my_variable")
+isEnabled := childF.IsEnabled("checkout")
+variation := childF.GetVariation("checkout")
+variableValue := childF.GetVariable("checkout", "bgColor")
 ```
 
 Similar to parent SDK, child instances also support several additional methods:
@@ -810,89 +887,20 @@ Both primary and child instances support a `.Close()` method, that removes forgo
 f.Close()
 ```
 
-## CLI usage
-
-This package also provides a CLI tool for running your Featurevisor [project](https://featurevisor.com/docs/projects/)'s test specs and benchmarking against this Go SDK:
-
-All three commands accept repeatable `--target=<target>` options. `test` builds only the selected Target datafiles and runs untargeted assertions plus assertions for those targets. `benchmark` and `assess-distribution` run independently against every selected Target datafile. Without `--target`, existing project-wide behaviour is preserved. Project definitions, test specs, Target discovery, and datafile generation continue to come from the Node.js CLI.
-
-### Test
-
-Learn more about testing [here](https://featurevisor.com/docs/testing/).
-
-```bash
-go run cmd/main.go test --projectDirectoryPath="/absolute/path/to/your/featurevisor/project"
-```
-
-Additional options that are available:
-
-```bash
-go run cmd/main.go test \
-    --projectDirectoryPath="/absolute/path/to/your/featurevisor/project" \
-    --quiet|verbose \
-    --onlyFailures \
-    --keyPattern="myFeatureKey" \
-    --assertionPattern="#1"
-```
-
-If you want to validate parity locally against the JavaScript SDK runner, you can use the bundled example project:
-
-```bash
-cd ../featurevisor/examples/example-1
-npx featurevisor test
-
-# from this Go SDK repository root:
-go run cmd/main.go test \
-  --projectDirectoryPath="../featurevisor/examples/example-1" \
-  --onlyFailures
-
-# or:
-make test-example-1
-```
-
-### Benchmark
-
-Learn more about benchmarking [here](https://featurevisor.com/docs/cli/#benchmarking).
-
-```bash
-go run cmd/main.go benchmark \
-    --projectDirectoryPath="/absolute/path/to/your/featurevisor/project" \
-    --environment="production" \
-    --feature="myFeatureKey" \
-    --context='{"country": "nl"}' \
-    --n=1000
-```
-
-### Assess distribution
-
-Learn more about assessing distribution [here](https://featurevisor.com/docs/cli/#assess-distribution).
-
-```bash
-go run cmd/main.go assess-distribution \
-    --projectDirectoryPath="/absolute/path/to/your/featurevisor/project" \
-    --environment=production \
-    --feature=foo \
-    --variation \
-    --context='{"country": "nl"}' \
-    --populateUuid=userId \
-    --populateUuid=deviceId \
-    --n=1000
-```
-
 ## OpenFeature
 
-The OpenFeature provider is a separate Go module, so applications that do not use OpenFeature do not receive its dependencies:
+The OpenFeature provider is a separate Go module, so applications that do not use OpenFeature do not receive its dependencies. The provider requires Go 1.26 or newer and uses OpenFeature Go SDK 1.19.0. The core Featurevisor SDK still supports Go 1.21:
 
 ```bash
-go get github.com/featurevisor/featurevisor-go/openfeature/v3
+go get github.com/featurevisor/featurevisor-go/openfeature/v4
 ```
 
 ```go
 import (
     "context"
 
-    featurevisor "github.com/featurevisor/featurevisor-go/v3"
-    featurevisorof "github.com/featurevisor/featurevisor-go/openfeature/v3"
+    featurevisor "github.com/featurevisor/featurevisor-go/v4"
+    featurevisorof "github.com/featurevisor/featurevisor-go/openfeature/v4"
     of "github.com/open-feature/go-sdk/openfeature"
 )
 
@@ -917,24 +925,108 @@ enabled, err := client.BooleanValue(
 
 Use `checkout` for a flag, `checkout:variation` for its variation, `checkout:title` for a feature variable, and `variable:supportEmail` for a global variable. Boolean variables use the boolean resolver. Arrays, objects, and JSON variables use the object resolver.
 
-OpenFeature's targeting key maps to `userId` by default. `TargetingKeyField`, `KeySeparator`, `VariationKey`, and `GlobalVariablePrefix` can customize the mapping. The global prefix defaults to `variable` and cannot contain the separator. The provider's separate module follows the Go version requirement of the official OpenFeature Go SDK.
+OpenFeature's targeting key maps to `userId` by default. `TargetingKeyField`, `KeySeparator`, `VariationKey`, and `GlobalVariablePrefix` can customize the mapping. The global prefix defaults to `variable` and cannot contain the separator. The provider's separate module follows the Go version requirement of the official OpenFeature Go SDK. A provider call receiving a `FlattenedContext` with an explicitly empty `targetingKey` overrides the configured field. The upstream Go client omits empty targeting keys when flattening `EvaluationContext`, so `NewEvaluationContext("", attributes)` cannot express the difference between absent and explicitly empty. To override an existing field with an empty key through the client, include `"targetingKey": ""` in its attributes. If a nonempty targeting key is inherited into the final context, clear it at its source first. A narrower empty key may not remove it.
 
-You can also reuse an existing Featurevisor instance:
+Root `conditions_unmet` outcomes map to OpenFeature `DISABLED`. Composed values and matched overrides map to `TARGETING_MATCH`. The provider does not decode composed JSON values again.
+
+Reuse an existing Featurevisor instance:
 
 ```go
-fv := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
+f := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
     Datafile: datafileContent,
 })
 provider := featurevisorof.NewProvider(featurevisorof.Options{
-    Featurevisor: fv,
+    Featurevisor: f,
 })
 ```
 
 The caller owns an instance passed this way. Provider shutdown does not close it. Call `fv.Close()` when every consumer is finished with it. When the provider creates the instance from `FeaturevisorOptions`, the provider owns and closes it. If both fields are supplied, `Featurevisor` takes precedence over `FeaturevisorOptions`.
 
+An invalid initial datafile in an owned instance makes `SetProviderAndWait` return a parse error, independently of the diagnostic log level. Valid updates clear the error and emit readiness. Shutdown removes provider subscriptions and closes only an owned instance.
+
 See the [OpenFeature provider guide](https://featurevisor.com/docs/sdks/openfeature/) for resolution reasons, errors, metadata, tracking, lifecycle, and providers for other languages.
 
+## CLI usage
+
+Build the executable from this SDK repository:
+
+```bash
+go build -o featurevisor ./cmd
+```
+
+The native test runner requires `@featurevisor/cli` 4.0.0 or later and Node.js 24 or later. Install the Node.js CLI in your Featurevisor project:
+
+```bash
+npm install --save-dev @featurevisor/cli@^4.0.0
+```
+
+The native CLI supports `test`, `benchmark` and `assess-distribution`. Node.js remains responsible for parsing definitions, listing tests through the execution protocol, expanding matrices and generating datafiles through `npx featurevisor`. Evaluations run through this Go SDK. Use the Node.js CLI directly for authoring commands such as `init`, `lint` and `build`. The SDK runtime has no Node.js dependency.
+
+Options use kebab case, such as `--project-directory-path`. The camelCase forms from earlier releases still work, and `--root-directory-path` is an alias for `--project-directory-path`. Pass values as `--name=value` or `--name value`. Repeat `--target` to select several targets in order. Run `<command> --help` to list every option.
+
+Quote JSON and paths containing spaces as a single shell argument. Duplicate targets are evaluated once, at their first position. Extra positional arguments and unknown options are rejected.
+
+### Test
+
+```bash
+./featurevisor test \
+  --project-directory-path=/path/to/featurevisor-project \
+  --only-failures
+```
+
+See [Testing](https://featurevisor.com/docs/testing/) for authoring specs and [Checks](https://featurevisor.com/docs/testing/#checks) for check syntax and operators.
+
+Segment owners and checks use ordinary SDK gates, including feature and variable dependencies, fixed `at`, context and sticky state. Selected Target segment specializations remain authoritative. Compiled execution definitions restore missing segments. Attribute only segment chains can run without an environment. Dependent segments need their selected datafile. Every transitive check reference is preflighted before getters run. Synthetic segment gates are excluded from coverage. Testing does not automatically run lint.
+
+Useful test options:
+
+- `--key-pattern=<pattern>` and `--assertion-pattern=<pattern>` filter tests.
+- `--entity-type=scenario` selects scenarios. `--set=<set>` selects one project set. Omitting `--set` runs all sets.
+- `--case=<id>` reruns one expanded case. Copy the opaque ID or rerun command from a failure report.
+- `--json --pretty` produces an indented JSON report.
+- `--coverage` reports observed rule and override selections. `--uncovered` lists features and global variables without associated specs.
+- `--only-failures`, `--quiet`, `--verbose` and `--show-datafile` control diagnostic output.
+
+### Benchmark
+
+The examples below use a project without environments. Add `--environment=<name>` if your project configures environments. In a sets project, omit `--set` to run every set or pass `--set=<name>`. Repeat `--target=<key>` to evaluate specific target datafiles. The Node.js CLI validates these options and builds the datafiles. Go evaluates them. Replace `checkout` with a feature defined in your project.
+
+```bash
+./featurevisor benchmark \
+  --project-directory-path=/path/to/featurevisor-project \
+  --feature=checkout \
+  --context='{"country":"nl"}' \
+  --n=1000
+```
+
+Use `--variation` for a variation or `--variable=<key>` for a feature variable. Omit `--feature` to benchmark a global variable. Do not combine `--variation` with `--variable`. See [Benchmarking](https://featurevisor.com/docs/cli/#benchmarking).
+
+### Assess distribution
+
+```bash
+./featurevisor assess-distribution \
+  --project-directory-path=/path/to/featurevisor-project \
+  --feature=checkout \
+  --populate-uuid=userId \
+  --n=1000
+```
+
+Repeat `--populate-uuid=<key>` or `--populate-uuid <key>` to generate UUID values for multiple context attributes. `--n` and `-n` both accept a positive integer and default to 1000 evaluations in this native CLI. See [Assess distribution](https://featurevisor.com/docs/cli/#assess-distribution).
+
+## GitHub repositories
+
+- SDK: [featurevisor/featurevisor-go](https://github.com/featurevisor/featurevisor-go)
+- Example application: [featurevisor/featurevisor-example-go](https://github.com/featurevisor/featurevisor-example-go)
+
 <!-- FEATUREVISOR_DOCS_END -->
+
+<a id="getting-all-evaluations"></a>
+
+The aggregate evaluation reference has moved to [Getting evaluations](#getting-evaluations).
+
+<a id="sticky-features-and-variables"></a>
+
+The sticky state reference has moved to [Sticky](#sticky).
 
 ## Development of this package
 
@@ -949,13 +1041,19 @@ go mod download
 ### Running tests
 
 ```bash
-go test ./...
+make check
+make test-example-1
 ```
+
+The native tests cover runtime conformance and project integration.
+
+Run `go test -run TestReadmeInitialization .` to compile and execute the actual initialization snippet against a local HTTP fixture. This check also runs in the ordinary SDK suite and CI.
 
 ### Releasing
 
-- Tag the core SDK as `v3.x.y`.
-- Tag the provider module separately as `openfeature/v3.x.y`.
+- Tag the core SDK as `v4.x.y`.
+- Tag the provider module separately as `openfeature/v4.x.y`.
+- Release the core SDK before the provider that depends on it.
 - Run `make verify-packages` before creating either release.
 - Create the matching releases on [GitHub](https://github.com/featurevisor/featurevisor-go/releases).
 

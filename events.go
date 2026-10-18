@@ -1,7 +1,6 @@
 package featurevisor
 
 import (
-	"encoding/json"
 	"reflect"
 )
 
@@ -16,212 +15,269 @@ func changedEntityKeys[T any](before map[string]T, after map[string]T, hash func
 	changed := map[string]bool{}
 	for key, oldValue := range before {
 		newValue, ok := after[key]
-		if !ok || hash(oldValue) != hash(newValue) {
+		oldHash, newHash := hash(oldValue), hash(newValue)
+		if !ok || oldHash == "" || newHash == "" || oldHash != newHash {
 			changed[key] = true
 		}
 	}
 	for key, newValue := range after {
 		oldValue, ok := before[key]
-		if !ok || hash(oldValue) != hash(newValue) {
+		oldHash, newHash := hash(oldValue), hash(newValue)
+		if !ok || oldHash == "" || newHash == "" || oldHash != newHash {
 			changed[key] = true
 		}
 	}
 	return changed
 }
 
-func collectSegmentKeys(value interface{}, result map[string]bool) {
-	if raw, ok := value.(string); ok {
-		if raw == "*" {
-			return
+func collectConditionDependencies(value interface{}, segments, features, variables map[string]bool) {
+	value = (&entityNormalizer{}).parse(value)
+	switch v := value.(type) {
+	case string:
+		if v != "*" {
+			segments[v] = true
 		}
-		if len(raw) > 0 && (raw[0] == '{' || raw[0] == '[') {
-			var parsed interface{}
-			if json.Unmarshal([]byte(raw), &parsed) == nil {
-				collectSegmentKeys(parsed, result)
-				return
-			}
-		}
-		result[raw] = true
-		return
-	}
-	switch typed := value.(type) {
 	case []interface{}:
-		for _, item := range typed {
-			collectSegmentKeys(item, result)
+		for _, child := range v {
+			collectConditionDependencies(child, segments, features, variables)
 		}
 	case map[string]interface{}:
-		for _, item := range typed {
-			collectSegmentKeys(item, result)
+		if variable, ok := v["variable"].(string); ok {
+			if feature, ok := v["feature"].(string); ok {
+				features[feature] = true
+			} else {
+				variables[variable] = true
+			}
+		} else if feature, ok := v["feature"].(string); ok {
+			features[feature] = true
+		} else {
+			for _, op := range []string{"and", "or", "not"} {
+				if child, ok := v[op]; ok {
+					collectConditionDependencies(child, segments, features, variables)
+				}
+			}
 		}
 	}
 }
 
-func collectRequiredFeatureKeys(values []Required, result map[string]bool) {
-	for _, value := range values {
-		key, _, _, ok := requiredFeatureParts(value)
-		if ok {
-			result[key] = true
-		}
-	}
-}
-
-func featureDependencies(feature Feature) (map[string]bool, map[string]bool) {
-	segments, features := map[string]bool{}, map[string]bool{}
-	required := feature.RequiredFeatures
-	if len(required) == 0 {
-		required = feature.Required
-	}
-	collectRequiredFeatureKeys(required, features)
+func featureDependencies(feature Feature) (map[string]bool, map[string]bool, map[string]bool) {
+	value, _ := normalizeEntity("feature", "", feature, false)
+	feature = value.(Feature)
+	segments, features, variables := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	visit := func(value interface{}) { collectConditionDependencies(value, segments, features, variables) }
+	visit(feature.Conditions)
 	for _, traffic := range feature.Traffic {
-		collectSegmentKeys(traffic.Segments, segments)
-		for _, overrides := range traffic.VariableOverrides {
-			for _, override := range overrides {
-				collectSegmentKeys(override.Segments, segments)
-				collectRequiredFeatureKeys(override.RequiredFeatures, features)
+		visit(traffic.Conditions)
+		for _, entries := range traffic.VariableOverrides {
+			for _, entry := range entries {
+				visit(entry.Conditions)
 			}
 		}
 	}
 	for _, force := range feature.Force {
-		collectSegmentKeys(force.Segments, segments)
+		visit(force.Conditions)
 	}
 	for _, variation := range feature.Variations {
-		for _, overrides := range variation.VariableOverrides {
-			for _, override := range overrides {
-				collectSegmentKeys(override.Segments, segments)
-				collectRequiredFeatureKeys(override.RequiredFeatures, features)
+		for _, entries := range variation.VariableOverrides {
+			for _, entry := range entries {
+				visit(entry.Conditions)
 			}
 		}
 	}
-	return segments, features
+	return segments, features, variables
 }
 
-func variableDependencies(variable GlobalVariable) (map[string]bool, map[string]bool) {
-	segments, features := map[string]bool{}, map[string]bool{}
-	collectRequiredFeatureKeys(variable.RequiredFeatures, features)
-	for _, override := range variable.Overrides {
-		collectSegmentKeys(override.Segments, segments)
-		collectRequiredFeatureKeys(override.RequiredFeatures, features)
+func variableDependencies(variable GlobalVariable) (map[string]bool, map[string]bool, map[string]bool) {
+	value, _ := normalizeEntity("variable", "", variable, false)
+	variable = value.(GlobalVariable)
+	segments, features, variables := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	visit := func(value interface{}) { collectConditionDependencies(value, segments, features, variables) }
+	visit(variable.Conditions)
+	if variable.OverrideProgram != nil {
+		for _, entry := range variable.OverrideProgram {
+			visit(entry.Conditions)
+		}
+	} else {
+		for _, entry := range variable.Overrides {
+			visit(entry.Conditions)
+		}
 	}
-	return segments, features
+	if alias, ok := variable.Compose.(string); ok {
+		variables[alias] = true
+	} else if entries, ok := expressionValue(variable.Compose).([]interface{}); ok {
+		for _, entry := range entries {
+			if ref, ok := entry.(map[string]interface{}); ok {
+				if feature, ok := ref["feature"].(string); ok {
+					features[feature] = true
+				} else if variable, ok := ref["variable"].(string); ok {
+					variables[variable] = true
+				}
+			}
+		}
+	}
+	return segments, features, variables
+}
+
+// Event graphs are owned by the instance writer, never by evaluation snapshots.
+type dependencyEntity struct {
+	kind, key string
+}
+
+type datafileDependencyIndex struct {
+	extractions uint64
+	owners      map[dependencyEntity]map[dependencyEntity]bool
+	reverse     map[dependencyEntity]map[dependencyEntity]bool
+}
+
+func newDatafileDependencyIndex() *datafileDependencyIndex {
+	return &datafileDependencyIndex{
+		owners:  map[dependencyEntity]map[dependencyEntity]bool{},
+		reverse: map[dependencyEntity]map[dependencyEntity]bool{},
+	}
+}
+
+func (index *datafileDependencyIndex) remove(owner dependencyEntity) {
+	for dependency := range index.owners[owner] {
+		delete(index.reverse[dependency], owner)
+		if len(index.reverse[dependency]) == 0 {
+			delete(index.reverse, dependency)
+		}
+	}
+	delete(index.owners, owner)
+}
+
+func (index *datafileDependencyIndex) add(owner dependencyEntity, segments, features, variables map[string]bool) {
+	index.extractions++
+	edges := map[dependencyEntity]bool{}
+	for kind, keys := range map[string]map[string]bool{"segment": segments, "feature": features, "variable": variables} {
+		for key := range keys {
+			dependency := dependencyEntity{kind, key}
+			edges[dependency] = true
+			if index.reverse[dependency] == nil {
+				index.reverse[dependency] = map[dependencyEntity]bool{}
+			}
+			index.reverse[dependency][owner] = true
+		}
+	}
+	index.owners[owner] = edges
+}
+
+func (index *datafileDependencyIndex) addDatafile(data DatafileContent) {
+	for key, value := range data.Features {
+		segments, features, variables := featureDependencies(value)
+		index.add(dependencyEntity{"feature", key}, segments, features, variables)
+	}
+	for key, value := range data.Variables {
+		segments, features, variables := variableDependencies(value)
+		index.add(dependencyEntity{"variable", key}, segments, features, variables)
+	}
+	for key, value := range data.Segments {
+		segments, features, variables := map[string]bool{}, map[string]bool{}, map[string]bool{}
+		collectConditionDependencies(value.Conditions, segments, features, variables)
+		index.add(dependencyEntity{"segment", key}, segments, features, variables)
+	}
+}
+
+func providerDatafile(provider *instanceEvaluationDataProvider) DatafileContent {
+	if provider == nil {
+		return DatafileContent{}
+	}
+	return DatafileContent{Features: provider.features, Variables: provider.variables, Segments: provider.segments}
+}
+
+func (index *datafileDependencyIndex) propagate(features, variables, segments map[string]bool) {
+	seen := map[dependencyEntity]bool{}
+	queue := []dependencyEntity{}
+	for kind, keys := range map[string]map[string]bool{"feature": features, "variable": variables, "segment": segments} {
+		for key := range keys {
+			entity := dependencyEntity{kind, key}
+			seen[entity] = true
+			queue = append(queue, entity)
+		}
+	}
+	for cursor := 0; cursor < len(queue); cursor++ {
+		for owner := range index.reverse[queue[cursor]] {
+			if seen[owner] {
+				continue
+			}
+			seen[owner] = true
+			queue = append(queue, owner)
+			switch owner.kind {
+			case "feature":
+				features[owner.key] = true
+			case "variable":
+				variables[owner.key] = true
+			}
+		}
+	}
 }
 
 func affectedDatafileEntities(previous, next *instanceEvaluationDataProvider) ([]string, []string) {
-	oldFeatures, newFeatures := map[string]Feature{}, map[string]Feature{}
-	oldVariables, newVariables := map[string]GlobalVariable{}, map[string]GlobalVariable{}
-	oldSegments, newSegments := map[string]Segment{}, map[string]Segment{}
-	if previous != nil {
-		for key, value := range previous.features {
-			oldFeatures[key] = value
-		}
-		for key, value := range previous.variables {
-			oldVariables[key] = value
-		}
-		for key, value := range previous.segments {
-			oldSegments[key] = value
+	var index *datafileDependencyIndex
+	return updateAffectedDatafileEntities(previous, next, providerDatafile(next), true, &index)
+}
+
+func updateAffectedDatafileEntities(previous, next *instanceEvaluationDataProvider, incoming DatafileContent, replace bool, cached **datafileDependencyIndex) ([]string, []string) {
+	before, after := providerDatafile(previous), providerDatafile(next)
+	features := changedEntityKeys(before.Features, after.Features, func(value Feature) string { return stringValue(value.Hash) })
+	variables := changedEntityKeys(before.Variables, after.Variables, func(value GlobalVariable) string { return stringValue(value.Hash) })
+	segments := map[string]bool{}
+	segmentCandidates := incoming.Segments
+	if replace {
+		segmentCandidates = before.Segments
+	}
+	for key := range segmentCandidates {
+		old, oldOK := before.Segments[key]
+		value, ok := after.Segments[key]
+		if oldOK != ok || !reflect.DeepEqual(old, value) {
+			segments[key] = true
 		}
 	}
-	if next != nil {
-		for key, value := range next.features {
-			newFeatures[key] = value
-		}
-		for key, value := range next.variables {
-			newVariables[key] = value
-		}
-		for key, value := range next.segments {
-			newSegments[key] = value
-		}
-	}
-	changedFeatures := changedEntityKeys(oldFeatures, newFeatures, func(value Feature) string {
-		if value.Hash != nil {
-			return *value.Hash
-		}
-		raw, _ := json.Marshal(value)
-		return string(raw)
-	})
-	changedVariables := changedEntityKeys(oldVariables, newVariables, func(value GlobalVariable) string {
-		if value.Hash != nil {
-			return *value.Hash
-		}
-		raw, _ := json.Marshal(value)
-		return string(raw)
-	})
-	changedSegments := map[string]bool{}
-	for key, value := range oldSegments {
-		if nextValue, ok := newSegments[key]; !ok || !reflect.DeepEqual(value, nextValue) {
-			changedSegments[key] = true
-		}
-	}
-	for key, value := range newSegments {
-		if oldValue, ok := oldSegments[key]; !ok || !reflect.DeepEqual(value, oldValue) {
-			changedSegments[key] = true
-		}
-	}
-	allFeatures := map[string]Feature{}
-	for key, value := range oldFeatures {
-		allFeatures[key] = value
-	}
-	for key, value := range newFeatures {
-		allFeatures[key] = value
-	}
-	for updated := true; updated; {
-		updated = false
-		for key, feature := range allFeatures {
-			if changedFeatures[key] {
-				continue
-			}
-			segments, required := featureDependencies(feature)
-			dependent := false
-			for segment := range segments {
-				if changedSegments[segment] {
-					dependent = true
-				}
-			}
-			for requiredKey := range required {
-				if changedFeatures[requiredKey] {
-					dependent = true
-				}
-			}
-			if dependent {
-				changedFeatures[key] = true
-				updated = true
+	if replace {
+		for key, value := range after.Segments {
+			old, ok := before.Segments[key]
+			if !ok || !reflect.DeepEqual(old, value) {
+				segments[key] = true
 			}
 		}
 	}
-	allVariables := map[string]GlobalVariable{}
-	for key, value := range oldVariables {
-		allVariables[key] = value
-	}
-	for key, value := range newVariables {
-		allVariables[key] = value
-	}
-	for key, variable := range allVariables {
-		if changedVariables[key] {
-			continue
+	if len(before.Features)+len(before.Variables)+len(before.Segments) > 0 {
+		if *cached == nil {
+			*cached = newDatafileDependencyIndex()
+			(*cached).addDatafile(before)
 		}
-		segments, required := variableDependencies(variable)
-		dependent := false
-		for segment := range segments {
-			if changedSegments[segment] {
-				dependent = true
+		index := *cached
+		// Segment reachability is local to each traversal, as in JavaScript.
+		index.propagate(features, variables, segments)
+		if replace {
+			for owner := range index.owners {
+				index.remove(owner)
+			}
+		} else {
+			for key := range incoming.Features {
+				index.remove(dependencyEntity{"feature", key})
+			}
+			for key := range incoming.Variables {
+				index.remove(dependencyEntity{"variable", key})
+			}
+			for key := range incoming.Segments {
+				index.remove(dependencyEntity{"segment", key})
 			}
 		}
-		for requiredKey := range required {
-			if changedFeatures[requiredKey] {
-				dependent = true
-			}
-		}
-		if dependent {
-			changedVariables[key] = true
-		}
+		index.addDatafile(incoming)
+		index.propagate(features, variables, segments)
+	} else {
+		// Construction announces every incoming definition without indexing.
+		*cached = nil
 	}
-	features, variables := []string{}, []string{}
-	for key := range changedFeatures {
-		features = append(features, key)
+	featureKeys, variableKeys := []string{}, []string{}
+	for key := range features {
+		featureKeys = append(featureKeys, key)
 	}
-	for key := range changedVariables {
-		variables = append(variables, key)
+	for key := range variables {
+		variableKeys = append(variableKeys, key)
 	}
-	return features, variables
+	return featureKeys, variableKeys
 }
 
 // getParamsForDatafileSetEvent gets parameters for datafile set event

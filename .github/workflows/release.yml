@@ -1,6 +1,14 @@
 name: Release validation
 
+# Prefer the manual run: it validates the selected commit first and only then
+# creates the tag, because the Go module proxy keeps a version once fetched.
+# Tags pushed by hand are still validated afterwards.
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create after validation, such as v4.0.0 or openfeature/v4.0.0"
+        required: true
   push:
     tags:
       - "v*"
@@ -8,6 +16,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
   validate:
@@ -19,7 +30,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: |
             go.sum
             openfeature/go.sum
@@ -27,12 +38,33 @@ jobs:
       - name: Validate tag and modules
         shell: bash
         run: |
-          if [[ "$GITHUB_REF_NAME" == openfeature/* ]]; then
-            [[ "$GITHUB_REF_NAME" =~ ^openfeature/v3\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          if [[ "$RELEASE_TAG" == openfeature/* ]]; then
+            [[ "$RELEASE_TAG" =~ ^openfeature/v4\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
           else
-            [[ "$GITHUB_REF_NAME" =~ ^v3\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+            [[ "$RELEASE_TAG" =~ ^v4\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
           fi
           make verify-packages
 
       - name: Test SDK and provider
         run: make test
+
+  tag:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create the validated tag
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null; then
+            echo "$RELEASE_TAG already exists" >&2
+            exit 1
+          fi
+          git tag "$RELEASE_TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$RELEASE_TAG"

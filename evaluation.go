@@ -7,8 +7,6 @@ const (
 	// Feature specific
 	EvaluationReasonFeatureNotFound EvaluationReason = "feature_not_found" // feature is not found in datafile
 	EvaluationReasonDisabled        EvaluationReason = "disabled"          // feature is disabled
-	EvaluationReasonRequired        EvaluationReason = "required"          // required features are not enabled
-	EvaluationReasonOutOfRange      EvaluationReason = "out_of_range"      // out of range when mutually exclusive experiments are involved via Groups
 
 	// Variations specific
 	EvaluationReasonNoVariations      EvaluationReason = "no_variations"      // feature has no variations
@@ -20,7 +18,8 @@ const (
 	EvaluationReasonVariableDisabled          EvaluationReason = "variable_disabled"           // feature is disabled, and variable's disabledValue is used
 	EvaluationReasonVariableOverrideVariation EvaluationReason = "variable_override_variation" // variable overridden from inside a variation
 	EvaluationReasonVariableOverrideRule      EvaluationReason = "variable_override_rule"      // variable overridden from inside a rule
-	EvaluationReasonRequiredFeaturesUnmet     EvaluationReason = "required_features_unmet"
+	EvaluationReasonConditionsUnmet           EvaluationReason = "conditions_unmet"
+	EvaluationReasonVariableComposed          EvaluationReason = "variable_composed"
 
 	// Common
 	EvaluationReasonNoMatch   EvaluationReason = "no_match"  // no rules matched
@@ -49,17 +48,16 @@ type Evaluation struct {
 	Reason     EvaluationReason `json:"reason"`
 
 	// Common
-	BucketKey        *BucketKey        `json:"bucketKey,omitempty"`
-	BucketValue      *BucketValue      `json:"bucketValue,omitempty"`
-	RuleKey          *RuleKey          `json:"ruleKey,omitempty"`
-	Error            error             `json:"error,omitempty"`
-	Enabled          *bool             `json:"enabled,omitempty"`
-	Traffic          *Traffic          `json:"traffic,omitempty"`
-	ForceIndex       *int              `json:"forceIndex,omitempty"`
-	Force            *Force            `json:"force,omitempty"`
-	Required         []Required        `json:"required,omitempty"`
-	RequiredFeatures []Required        `json:"requiredFeatures,omitempty"`
-	Sticky           *EvaluatedFeature `json:"sticky,omitempty"`
+	BucketKey     *BucketKey        `json:"bucketKey,omitempty"`
+	BucketValue   *BucketValue      `json:"bucketValue,omitempty"`
+	RuleKey       *RuleKey          `json:"ruleKey,omitempty"`
+	Error         error             `json:"error,omitempty"`
+	Enabled       *bool             `json:"enabled,omitempty"`
+	Traffic       *Traffic          `json:"traffic,omitempty"`
+	ForceIndex    *int              `json:"forceIndex,omitempty"`
+	Force         *Force            `json:"force,omitempty"`
+	Conditions    Condition         `json:"conditions,omitempty"`
+	StickyFeature *EvaluatedFeature `json:"stickyFeature,omitempty"`
 
 	// Variation
 	Variation      *Variation      `json:"variation,omitempty"`
@@ -73,5 +71,7 @@ type Evaluation struct {
 	VariableOverrideIndex *int            `json:"variableOverrideIndex,omitempty"`
 	VariableOverrideKey   *string         `json:"variableOverrideKey,omitempty"`
 	VariableOverridePath  []string        `json:"variableOverridePath,omitempty"`
+	VariableOverridePaths [][]string      `json:"variableOverridePaths,omitempty"`
 	variableValueSet      bool
+	getterValueNormalized bool
 }

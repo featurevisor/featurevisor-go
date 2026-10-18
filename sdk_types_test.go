@@ -1,8 +1,34 @@
 package featurevisor
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 )
+
+func TestParsedFeatureUsesCanonicalRequirements(t *testing.T) {
+	if _, exists := reflect.TypeOf(ParsedFeature{}).FieldByName("Required"); exists {
+		t.Fatal("ParsedFeature must not expose the removed legacy Required field")
+	}
+	var feature ParsedFeature
+	if err := json.Unmarshal([]byte(`{"key":"checkout","requiredFeatures":["account"]}`), &feature); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(feature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if string(fields["requiredFeatures"]) != `["account"]` {
+		t.Fatalf("canonical requirements were not preserved: %s", encoded)
+	}
+	if _, exists := fields["required"]; exists {
+		t.Fatal("ParsedFeature must not serialize legacy required")
+	}
+}
 
 func TestProductionTagAllDatafile(t *testing.T) {
 	// Production featurevisor-tag-all.json datafile
@@ -298,8 +324,8 @@ func TestProductionTagCheckoutDatafile(t *testing.T) {
 		t.Errorf("Expected bucketBy to be 'userId', got '%v'", discountFeature.BucketBy)
 	}
 
-	if len(discountFeature.Required) != 1 {
-		t.Errorf("Expected 1 required feature, got %d", len(discountFeature.Required))
+	if len(discountFeature.RequiredFeatures) != 0 {
+		t.Errorf("Expected legacy required input to be ignored, got %d canonical requirements", len(discountFeature.RequiredFeatures))
 	}
 
 	if discountFeature.Hash == nil || *discountFeature.Hash != "7Z4IN6SGV0" {
@@ -452,8 +478,7 @@ func TestStagingTagAllDatafile(t *testing.T) {
 							}
 						]
 					}
-				],
-				"ranges": [[0, 100000]]
+				]
 			}
 		}
 	}`
@@ -506,10 +531,6 @@ func TestStagingTagAllDatafile(t *testing.T) {
 
 	if len(barFeature.Variations) != 3 {
 		t.Errorf("Expected 3 variations, got %d", len(barFeature.Variations))
-	}
-
-	if len(barFeature.Ranges) != 1 {
-		t.Errorf("Expected 1 range, got %d", len(barFeature.Ranges))
 	}
 
 	// Check for variable overrides
