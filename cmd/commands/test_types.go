@@ -1,6 +1,6 @@
 package commands
 
-import "github.com/featurevisor/featurevisor-go/v3"
+import "github.com/featurevisor/featurevisor-go/v4"
 
 // AssertionMatrix represents a matrix of assertions
 type AssertionMatrix map[string][]featurevisor.AttributeValue
@@ -96,7 +96,8 @@ type TestResult struct {
 
 // AssertionResult represents the result of a single assertion
 type AssertionResult struct {
-	HasError bool    `json:"hasError"`
-	Errors   string  `json:"errors"`
-	Duration float64 `json:"duration"`
+	HasError     bool          `json:"hasError"`
+	Errors       string        `json:"errors"`
+	Duration     float64       `json:"duration"`
+	ReportErrors []reportError `json:"-"`
 }

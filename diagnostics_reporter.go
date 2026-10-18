@@ -27,8 +27,9 @@ type diagnosticOutputHandler func(level LogLevel, message logMessage, details lo
 
 // diagnosticReporterOptions contains options for creating a diagnostics
 type diagnosticReporterOptions struct {
-	Level   *LogLevel
-	Handler *diagnosticOutputHandler
+	Level        *LogLevel
+	Handler      *diagnosticOutputHandler
+	ShouldHandle func(LogLevel) bool
 }
 
 // diagnosticPrefix is the prefix used for all log messages
@@ -78,9 +79,10 @@ func defaultDiagnosticHandler(level LogLevel, message logMessage, details logDet
 
 // diagnosticReporter provides logging functionality
 type diagnosticReporter struct {
-	level  LogLevel
-	handle diagnosticOutputHandler
-	filter bool
+	level                LogLevel
+	handle               diagnosticOutputHandler
+	filter               bool
+	shouldHandleOverride func(LogLevel) bool
 }
 
 // allLevels contains all available log levels in order of severity
@@ -110,9 +112,10 @@ func newDiagnosticReporter(options diagnosticReporterOptions) *diagnosticReporte
 	}
 
 	return &diagnosticReporter{
-		level:  level,
-		handle: handler,
-		filter: filter,
+		level:                level,
+		handle:               handler,
+		filter:               filter,
+		shouldHandleOverride: options.ShouldHandle,
 	}
 }
 
@@ -157,17 +160,66 @@ func (l *diagnosticReporter) Log(level LogLevel, message logMessage, details log
 	if l.filter && !l.shouldHandle(level) {
 		return
 	}
+	if !l.filter && l.shouldHandleOverride != nil && !l.shouldHandleOverride(level) {
+		return
+	}
 
 	if details == nil {
 		details = make(logDetails)
 	}
 
-	l.handle(level, message, details)
+	l.handle(level, message, cloneDiagnosticDetails(details))
+}
+
+func cloneDiagnosticDetails(details logDetails) logDetails {
+	cloned := make(logDetails, len(details))
+	for key, value := range details {
+		// Only expression trees can belong to the parsing cache. Context and
+		// application values retain their existing identity and may be cyclic.
+		switch key {
+		case "condition", "conditions", "segments":
+			cloned[key] = cloneDiagnosticValue(value)
+		default:
+			cloned[key] = value
+		}
+	}
+	return cloned
+}
+
+func cloneDiagnosticValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		cloned := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			cloned[key] = cloneDiagnosticValue(item)
+		}
+		return cloned
+	case []interface{}:
+		cloned := make([]interface{}, len(typed))
+		for index, item := range typed {
+			cloned[index] = cloneDiagnosticValue(item)
+		}
+		return cloned
+	default:
+		return value
+	}
 }
 
 // Debug logs a debug message
 func (l *diagnosticReporter) Debug(message logMessage, details logDetails) {
 	l.Log(LogLevelDebug, message, details)
+}
+
+// debugEvaluation avoids constructing evaluator metadata when no live
+// diagnostic audience can observe debug diagnostics.
+func (l *diagnosticReporter) debugEvaluation(message logMessage, evaluation Evaluation) {
+	if l.filter && !l.shouldHandle(LogLevelDebug) {
+		return
+	}
+	if !l.filter && l.shouldHandleOverride != nil && !l.shouldHandleOverride(LogLevelDebug) {
+		return
+	}
+	l.Log(LogLevelDebug, message, logDetails{"evaluation": evaluation})
 }
 
 // Info logs an info message

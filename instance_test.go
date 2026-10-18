@@ -293,7 +293,7 @@ func TestBeforeModule(t *testing.T) {
 		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
-				Before: func(options EvaluateOptions) EvaluateOptions {
+				BeforeEvaluation: func(options EvaluateOptions) EvaluateOptions {
 					intercepted = true
 					interceptedFeatureKey = string(options.FeatureKey)
 					if options.VariableKey != nil {
@@ -367,7 +367,7 @@ func TestAfterModule(t *testing.T) {
 		Modules: []*FeaturevisorModule{
 			{
 				Name: "unit-test",
-				After: func(evaluation Evaluation, options EvaluateOptions) Evaluation {
+				AfterEvaluation: func(evaluation Evaluation, options EvaluateOptions) Evaluation {
 					intercepted = true
 					interceptedFeatureKey = string(options.FeatureKey)
 					if options.VariableKey != nil {
@@ -518,6 +518,68 @@ func TestModuleDiagnosticLevelsAreIndependentFromInstanceLevel(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected debug module subscriber to receive evaluator diagnostics, got %#v", observed)
+	}
+}
+
+func TestEvaluatorDiagnosticAudienceTracksLiveSubscriptionChanges(t *testing.T) {
+	fatal := LogLevelFatal
+	instance := CreateFeaturevisor(FeaturevisorOptions{LogLevel: &fatal})
+	defer instance.Close()
+
+	var observed []FeaturevisorDiagnostic
+	var unsubscribe FeaturevisorUnsubscribe
+	instance.AddModule(&FeaturevisorModule{
+		Name: "temporary-observer",
+		Setup: func(api FeaturevisorModuleApi) {
+			unsubscribe = api.OnDiagnostic(func(diagnostic FeaturevisorDiagnostic) {
+				if diagnostic.Code != "feature_not_found" {
+					return
+				}
+				observed = append(observed, diagnostic)
+				unsubscribe()
+			}, FeaturevisorModuleDiagnosticOptions{LogLevel: LogLevelDebug})
+		},
+	})
+
+	instance.IsEnabled("missing")
+	instance.IsEnabled("missing")
+
+	if len(observed) != 1 {
+		t.Fatalf("expected the live subscription to receive one diagnostic before unsubscribing, got %d", len(observed))
+	}
+	diagnostic := observed[0]
+	if diagnostic.Level != LogLevelWarn || diagnostic.Code != "feature_not_found" || diagnostic.Message != "feature not found" {
+		t.Fatalf("unexpected diagnostic envelope: %#v", diagnostic)
+	}
+	if diagnostic.Details["featureKey"] != FeatureKey("missing") || diagnostic.Details["reason"] != EvaluationReasonFeatureNotFound {
+		t.Fatalf("expected canonical feature metadata, got %#v", diagnostic.Details)
+	}
+	evaluation, ok := diagnostic.Details["evaluation"].(Evaluation)
+	if !ok || evaluation.FeatureKey != "missing" || evaluation.Reason != EvaluationReasonFeatureNotFound {
+		t.Fatalf("expected embedded evaluation metadata, got %#v", diagnostic.Details["evaluation"])
+	}
+}
+
+func TestEvaluatorDiagnosticAudienceTracksThresholdChangesFromCallback(t *testing.T) {
+	debug := LogLevelDebug
+	var instance *Featurevisor
+	var observed []FeaturevisorDiagnostic
+	instance = CreateFeaturevisor(FeaturevisorOptions{
+		LogLevel: &debug,
+		OnDiagnostic: func(diagnostic FeaturevisorDiagnostic) {
+			if diagnostic.Code == "feature_not_found" {
+				observed = append(observed, diagnostic)
+				instance.SetLogLevel(LogLevelFatal)
+			}
+		},
+	})
+	defer instance.Close()
+
+	instance.IsEnabled("missing")
+	instance.IsEnabled("missing")
+
+	if len(observed) != 1 {
+		t.Fatalf("expected the callback threshold change to suppress the next diagnostic, got %d", len(observed))
 	}
 }
 
@@ -758,7 +820,9 @@ func TestSetDatafileMergesByDefaultAndReplacesWhenRequested(t *testing.T) {
 		},
 	}
 
-	instance.SetDatafile(secondDatafile)
+	if !instance.SetDatafile(secondDatafile) {
+		t.Fatal("expected merge to be accepted")
+	}
 
 	if instance.GetFeature("first") == nil {
 		t.Fatal("expected default SetDatafile to preserve existing features")
@@ -767,7 +831,9 @@ func TestSetDatafileMergesByDefaultAndReplacesWhenRequested(t *testing.T) {
 		t.Fatal("expected default SetDatafile to add incoming features")
 	}
 
-	instance.SetDatafile(secondDatafile, true)
+	if !instance.SetDatafile(secondDatafile, true) {
+		t.Fatal("expected replacement to be accepted")
+	}
 
 	if instance.GetFeature("first") != nil {
 		t.Fatal("expected replace SetDatafile to remove existing features")

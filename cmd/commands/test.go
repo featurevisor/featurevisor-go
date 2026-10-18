@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/featurevisor/featurevisor-go/v3"
+	"github.com/featurevisor/featurevisor-go/v4"
 )
 
 func valuesEqual(left, right interface{}) bool {
@@ -31,10 +32,11 @@ func formatTestValue(value interface{}) string {
 }
 
 type globalVariableEvaluator interface {
+	GetGlobalVariable(variableKey string, args ...interface{}) featurevisor.VariableValue
 	EvaluateGlobalVariable(variableKey string, args ...interface{}) featurevisor.Evaluation
 }
 
-func evaluateVariableAssertion(assertion map[string]interface{}, variableKey string, evaluator globalVariableEvaluator, prefix string) string {
+func evaluateVariableAssertion(assertion map[string]interface{}, variableKey string, evaluator globalVariableEvaluator, checkEvaluator checkVariableEvaluator, datafile featurevisor.DatafileContent, prefix string, basePath []interface{}) (string, []reportError) {
 	options := featurevisor.OverrideOptions{}
 	if value, ok := assertion["defaultVariableValue"]; ok {
 		options.DefaultVariableValue = value
@@ -42,24 +44,91 @@ func evaluateVariableAssertion(assertion map[string]interface{}, variableKey str
 	}
 	evaluation := evaluator.EvaluateGlobalVariable(variableKey, featurevisor.Context{}, options)
 	errors := ""
-	if expected, ok := assertion["expectedValue"]; ok && !valuesEqual(evaluation.VariableValue, expected) {
-		errors += fmt.Sprintf("      ✘ %sexpectedValue: expected %s but received %s\n", prefix, formatTestValue(expected), formatTestValue(evaluation.VariableValue))
+	reportErrors := []reportError{}
+	if expected, ok := assertion["expectedValue"]; ok {
+		actualValue := evaluator.GetGlobalVariable(variableKey, featurevisor.Context{}, options)
+		if !valuesEqual(actualValue, expected) {
+			message := fmt.Sprintf("%sexpectedValue: expected %s but received %s", prefix, formatTestValue(expected), formatTestValue(actualValue))
+			errors += "      ✘ " + message + "\n"
+			reportErrors = append(reportErrors, reportError{Message: message, Type: "variable", Path: appendPath(basePath, "expectedValue"), Expected: reportValuePointer(expected), Actual: reportValuePointer(actualValue)})
+		}
 	}
 	if expectedFields, ok := assertion["expectedEvaluation"].(map[string]interface{}); ok {
 		for key, expected := range expectedFields {
 			actual := getEvaluationValue(evaluation, key)
 			if !valuesEqual(actual, expected) {
-				errors += fmt.Sprintf("      ✘ %sexpectedEvaluation.%s: expected %s but received %s\n", prefix, key, formatTestValue(expected), formatTestValue(actual))
+				message := fmt.Sprintf("%sexpectedEvaluation.%s: expected %s but received %s", prefix, key, formatTestValue(expected), formatTestValue(actual))
+				errors += "      ✘ " + message + "\n"
+				reportErrors = append(reportErrors, reportError{Message: message, Type: "evaluation", Path: appendPath(basePath, "expectedEvaluation", key), Expected: reportValuePointer(expected), Actual: reportValuePointer(actual)})
 			}
 		}
 	}
-	return errors
+	checkOutcome := evaluateAssertionChecksAt(assertion, variableKey, checkEvaluator, datafile, prefix, basePath)
+	for _, checkError := range checkOutcome.Failures {
+		errors += fmt.Sprintf("      ✘ %s\n", checkError)
+	}
+	reportErrors = append(reportErrors, checkOutcome.ReportErrors...)
+	return errors, reportErrors
+}
+
+func preflightAssertionTree(assertion map[string]interface{}, ownerVariable string, evaluator checkVariableEvaluator, datafile featurevisor.DatafileContent, scenario bool) AssertionResult {
+	failures := []string{}
+	reportErrors := []reportError{}
+	appendOutcome := func(outcome checkAssertionOutcome) {
+		failures = append(failures, outcome.Failures...)
+		reportErrors = append(reportErrors, outcome.ReportErrors...)
+	}
+	children := []interface{}{}
+	if rawChildren, exists := assertion["children"]; exists {
+		var ok bool
+		children, ok = rawChildren.([]interface{})
+		if !ok {
+			failures = append(failures, "children: expected an array")
+		}
+	}
+	if scenario {
+		_, hasChecks := assertion["checks"]
+		if !hasChecks && len(children) == 0 {
+			failures = append(failures, "scenario assertion needs checks or children")
+		}
+	}
+	appendOutcome(preflightAssertionChecksAt(assertion, ownerVariable, evaluator, datafile, "", nil))
+	for index, rawChild := range children {
+		child, ok := rawChild.(map[string]interface{})
+		if !ok {
+			failures = append(failures, fmt.Sprintf("children[%d]: child assertion must be an object", index))
+			continue
+		}
+		if scenario {
+			if _, hasChecks := child["checks"]; !hasChecks {
+				failures = append(failures, fmt.Sprintf("children[%d].checks: expected a nonempty array", index))
+				continue
+			}
+		}
+		appendOutcome(preflightAssertionChecksAt(child, ownerVariable, evaluator, datafile, fmt.Sprintf("children[%d].", index), []interface{}{"children", index}))
+	}
+	if len(failures) == 0 {
+		return AssertionResult{}
+	}
+	errors := ""
+	for _, failure := range failures {
+		errors += "      ✘ " + failure + "\n"
+	}
+	return AssertionResult{HasError: true, Errors: errors, ReportErrors: reportErrors}
 }
 
 // RunTestVariable tests a global variable assertion.
-func RunTestVariable(assertion map[string]interface{}, variableKey string, instance *featurevisor.Featurevisor, level string) AssertionResult {
+func RunTestVariable(assertion map[string]interface{}, variableKey string, instance *featurevisor.Featurevisor, diagnostics *checkDiagnosticCollector, datafile featurevisor.DatafileContent, segmentDefinitions map[string]interface{}, level string) AssertionResult {
 	started := time.Now()
-	errors := evaluateVariableAssertion(assertion, variableKey, instance, "")
+	rootContext := contextFromAssertion(assertion)
+	segmentGates := segmentGateKeys(datafile, segmentDefinitions)
+	rootResolver := nativeCheckResolver{getter: instance, diagnostics: diagnostics, segmentDefinitions: segmentDefinitions, context: rootContext, datafile: datafile, segmentGates: segmentGates}
+	if result := preflightAssertionTree(assertion, variableKey, rootResolver, datafile, false); result.HasError {
+		result.Duration = time.Since(started).Seconds()
+		return result
+	}
+	installSegmentGates(instance, datafile, segmentDefinitions, segmentGates)
+	errors, reportErrors := evaluateVariableAssertion(assertion, variableKey, instance, rootResolver, datafile, "", nil)
 	if children, ok := assertion["children"].([]interface{}); ok {
 		for index, rawChild := range children {
 			childAssertion, ok := rawChild.(map[string]interface{})
@@ -75,11 +144,66 @@ func RunTestVariable(assertion map[string]interface{}, variableKey string, insta
 			})
 			func() {
 				defer child.Close()
-				errors += evaluateVariableAssertion(childAssertion, variableKey, child, fmt.Sprintf("children[%d].", index))
+				childErrors, childReportErrors := evaluateVariableAssertion(childAssertion, variableKey, child, nativeCheckResolver{getter: child, diagnostics: diagnostics, segmentDefinitions: segmentDefinitions, datafile: datafile, segmentGates: segmentGates, context: mergeContexts(rootContext, childContext)}, datafile, fmt.Sprintf("children[%d].", index), []interface{}{"children", index})
+				errors += childErrors
+				reportErrors = append(reportErrors, childReportErrors...)
 			}()
 		}
 	}
-	return AssertionResult{HasError: errors != "", Errors: errors, Duration: time.Since(started).Seconds()}
+	return AssertionResult{HasError: errors != "", Errors: errors, Duration: time.Since(started).Seconds(), ReportErrors: reportErrors}
+}
+
+// RunTestScenario evaluates a scenario assertion through the native SDK.
+func RunTestScenario(assertion map[string]interface{}, instance *featurevisor.Featurevisor, diagnostics *checkDiagnosticCollector, datafile featurevisor.DatafileContent, segmentDefinitions map[string]interface{}, level string) AssertionResult {
+	started := time.Now()
+	errors := ""
+	reportErrors := []reportError{}
+	children, _ := assertion["children"].([]interface{})
+	rootContext := contextFromAssertion(assertion)
+	segmentGates := segmentGateKeys(datafile, segmentDefinitions)
+	rootResolver := nativeCheckResolver{getter: instance, diagnostics: diagnostics, segmentDefinitions: segmentDefinitions, context: rootContext, datafile: datafile, segmentGates: segmentGates}
+	if result := preflightAssertionTree(assertion, "", rootResolver, datafile, true); result.HasError {
+		result.Duration = time.Since(started).Seconds()
+		return result
+	}
+	installSegmentGates(instance, datafile, segmentDefinitions, segmentGates)
+	if _, hasChecks := assertion["checks"]; !hasChecks && len(children) == 0 {
+		message := "scenario assertion needs checks or children"
+		errors += "      ✘ " + message + "\n"
+		reportErrors = append(reportErrors, reportError{Message: message, Type: "expectation", Expected: reportValuePointer(true), Actual: reportValuePointer(false)})
+	}
+	rootOutcome := evaluateAssertionChecksAt(assertion, "", rootResolver, datafile, "", nil)
+	for _, checkError := range rootOutcome.Failures {
+		errors += fmt.Sprintf("      ✘ %s\n", checkError)
+	}
+	reportErrors = append(reportErrors, rootOutcome.ReportErrors...)
+	if children != nil {
+		for index, rawChild := range children {
+			childAssertion, ok := rawChild.(map[string]interface{})
+			if !ok {
+				errors += fmt.Sprintf("      ✘ children[%d]: child assertion must be an object\n", index)
+				continue
+			}
+			if _, hasChecks := childAssertion["checks"]; !hasChecks {
+				message := fmt.Sprintf("children[%d].checks: expected a nonempty array", index)
+				errors += "      ✘ " + message + "\n"
+				reportErrors = append(reportErrors, reportError{Message: message, Type: "check", Path: []interface{}{"children", index, "checks"}, Expected: reportValuePointer("valid checks"), Actual: reportValuePointer(nil)})
+			}
+			child := instance.Spawn(contextFromAssertion(childAssertion), featurevisor.SpawnOptions{
+				StickyFeatures:  stickyFeaturesFromAssertion(childAssertion, "stickyFeatures"),
+				StickyVariables: stickyVariablesFromAssertion(childAssertion),
+			})
+			func() {
+				defer child.Close()
+				childOutcome := evaluateAssertionChecksAt(childAssertion, "", nativeCheckResolver{getter: child, diagnostics: diagnostics, segmentDefinitions: segmentDefinitions, datafile: datafile, segmentGates: segmentGates, context: mergeContexts(rootContext, contextFromAssertion(childAssertion))}, datafile, fmt.Sprintf("children[%d].", index), []interface{}{"children", index})
+				for _, checkError := range childOutcome.Failures {
+					errors += fmt.Sprintf("      ✘ %s\n", checkError)
+				}
+				reportErrors = append(reportErrors, childOutcome.ReportErrors...)
+			}()
+		}
+	}
+	return AssertionResult{HasError: errors != "", Errors: errors, Duration: time.Since(started).Seconds(), ReportErrors: reportErrors}
 }
 
 func contextFromAssertion(assertion map[string]interface{}) featurevisor.Context {
@@ -87,6 +211,22 @@ func contextFromAssertion(assertion map[string]interface{}) featurevisor.Context
 		return featurevisor.Context(value)
 	}
 	return featurevisor.Context{}
+}
+
+func mergeContexts(root, child featurevisor.Context) featurevisor.Context {
+	merged := featurevisor.Context{}
+	for key, value := range root {
+		merged[key] = value
+	}
+	for key, value := range child {
+		merged[key] = value
+	}
+	return merged
+}
+
+func segmentDefinitionsFromTest(test map[string]interface{}) map[string]interface{} {
+	definitions, _ := test["_segments"].(map[string]interface{})
+	return definitions
 }
 
 func stickyVariablesFromAssertion(assertion map[string]interface{}) *featurevisor.StickyVariables {
@@ -139,7 +279,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 
 	// Set context and sticky for this assertion
 	instance.SetContext(context, false)
-	if sticky, ok := assertion["sticky"].(map[string]interface{}); ok {
+	if sticky, ok := assertion["stickyFeatures"].(map[string]interface{}); ok {
 		// Convert sticky to proper format
 		stickyFeatures := featurevisor.StickyFeatures{}
 		for key, value := range sticky {
@@ -172,6 +312,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 
 	hasError := false
 	errors := ""
+	reportErrors := []reportError{}
 	startTime := time.Now()
 
 	// Test expectedToBeEnabled
@@ -181,6 +322,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 		if isEnabled != expectedToBeEnabled {
 			hasError = true
 			errors += fmt.Sprintf("      ✘ expectedToBeEnabled: expected %v but received %v\n", expectedToBeEnabled, isEnabled)
+			reportErrors = append(reportErrors, expectationReportError("flag", []interface{}{"expectedToBeEnabled"}, expectedToBeEnabled, isEnabled))
 		}
 	}
 
@@ -198,6 +340,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 		if !compareValues(variationValue, expectedVariation) {
 			hasError = true
 			errors += fmt.Sprintf("      ✘ expectedVariation: expected %v but received %v\n", expectedVariation, variationValue)
+			reportErrors = append(reportErrors, expectationReportError("variation", []interface{}{"expectedVariation"}, expectedVariation, variationValue))
 		}
 	}
 
@@ -241,6 +384,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 							actualJSON, _ := json.Marshal(actualValue)
 							errors += fmt.Sprintf("      ✘ expectedVariables.%s: expected %s but received %s\n",
 								variableKey, expectedStr, string(actualJSON))
+							reportErrors = append(reportErrors, expectationReportError("variable", []interface{}{"expectedVariables", variableKey}, expectedValue, string(actualJSON)))
 						}
 						continue
 					}
@@ -251,56 +395,14 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 			if !compareValues(actualValue, expectedValue) {
 				hasError = true
 				errors += fmt.Sprintf("      ✘ expectedVariables.%s: expected %v but received %v\n", variableKey, expectedValue, actualValue)
-			}
-		}
-	}
-
-	// Test expectedEvaluations (matching TypeScript implementation)
-	if expectedEvaluations, ok := assertion["expectedEvaluations"].(map[string]interface{}); ok {
-		// Test flag evaluations
-		if flagEvals, ok := expectedEvaluations["flag"].(map[string]interface{}); ok {
-			evaluation := instance.EvaluateFlag(featureKey, context, overrideOptions)
-			for key, expectedValue := range flagEvals {
-				actualValue := getEvaluationValue(evaluation, key)
-				if !compareValues(actualValue, expectedValue) {
-					hasError = true
-					errors += fmt.Sprintf("      ✘ expectedEvaluations.flag.%s: expected %v but received %v\n", key, expectedValue, actualValue)
-				}
-			}
-		}
-
-		// Test variation evaluations
-		if variationEvals, ok := expectedEvaluations["variation"].(map[string]interface{}); ok {
-			evaluation := instance.EvaluateVariation(featureKey, context, overrideOptions)
-			for key, expectedValue := range variationEvals {
-				actualValue := getEvaluationValue(evaluation, key)
-				if !compareValues(actualValue, expectedValue) {
-					hasError = true
-					errors += fmt.Sprintf("      ✘ expectedEvaluations.variation.%s: expected %v but received %v\n", key, expectedValue, actualValue)
-				}
-			}
-		}
-
-		// Test variable evaluations
-		if variableEvals, ok := expectedEvaluations["variables"].(map[string]interface{}); ok {
-			for variableKey, expectedEval := range variableEvals {
-				if expectedEvalMap, ok := expectedEval.(map[string]interface{}); ok {
-					evaluation := instance.EvaluateVariable(featureKey, featurevisor.VariableKey(variableKey), context, overrideOptions)
-					for key, expectedValue := range expectedEvalMap {
-						actualValue := getEvaluationValue(evaluation, key)
-						if !compareValues(actualValue, expectedValue) {
-							hasError = true
-							errors += fmt.Sprintf("      ✘ expectedEvaluations.variables.%s.%s: expected %v but received %v\n", variableKey, key, expectedValue, actualValue)
-						}
-					}
-				}
+				reportErrors = append(reportErrors, expectationReportError("variable", []interface{}{"expectedVariables", variableKey}, expectedValue, actualValue))
 			}
 		}
 	}
 
 	// Test children
 	if children, ok := assertion["children"].([]interface{}); ok {
-		for _, child := range children {
+		for childIndex, child := range children {
 			if childMap, ok := child.(map[string]interface{}); ok {
 				childContext := featurevisor.Context{}
 				if childCtx, ok := childMap["context"].(map[string]interface{}); ok {
@@ -308,7 +410,8 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 				}
 
 				childInstance := instance.Spawn(childContext, featurevisor.SpawnOptions{
-					StickyFeatures: stickyFeaturesFromAssertion(assertion, "sticky"),
+					StickyFeatures:  stickyFeaturesFromAssertion(childMap, "stickyFeatures"),
+					StickyVariables: stickyVariablesFromAssertion(childMap),
 				})
 				childResult := func() AssertionResult {
 					defer childInstance.Close()
@@ -318,6 +421,10 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 				if childResult.HasError {
 					hasError = true
 					errors += childResult.Errors
+					for _, childError := range childResult.ReportErrors {
+						childError.Path = appendPath([]interface{}{"children", childIndex}, childError.Path...)
+						reportErrors = append(reportErrors, childError)
+					}
 				}
 			}
 		}
@@ -332,6 +439,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 				if !compareValues(actualValue, expectedValue) {
 					hasError = true
 					errors += fmt.Sprintf("      ✘ expectedEvaluations.flag.%s: expected %v but received %v\n", key, expectedValue, actualValue)
+					reportErrors = append(reportErrors, expectationReportError("evaluation", []interface{}{"expectedEvaluations", "flag", key}, expectedValue, actualValue))
 				}
 			}
 		}
@@ -343,6 +451,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 				if !compareValues(actualValue, expectedValue) {
 					hasError = true
 					errors += fmt.Sprintf("      ✘ expectedEvaluations.variation.%s: expected %v but received %v\n", key, expectedValue, actualValue)
+					reportErrors = append(reportErrors, expectationReportError("evaluation", []interface{}{"expectedEvaluations", "variation", key}, expectedValue, actualValue))
 				}
 			}
 		}
@@ -363,6 +472,7 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 					if !compareValues(actualValue, expectedValue) {
 						hasError = true
 						errors += fmt.Sprintf("      ✘ expectedEvaluations.variables.%s.%s: expected %v but received %v\n", variableKey, key, expectedValue, actualValue)
+						reportErrors = append(reportErrors, expectationReportError("evaluation", []interface{}{"expectedEvaluations", "variables", variableKey, key}, expectedValue, actualValue))
 					}
 				}
 			}
@@ -372,9 +482,10 @@ func RunTestFeature(assertion map[string]interface{}, featureKey string, instanc
 	duration := time.Since(startTime).Seconds()
 
 	return AssertionResult{
-		HasError: hasError,
-		Errors:   errors,
-		Duration: duration,
+		HasError:     hasError,
+		Errors:       errors,
+		Duration:     duration,
+		ReportErrors: reportErrors,
 	}
 }
 
@@ -392,6 +503,7 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 
 	hasError := false
 	errors := ""
+	reportErrors := []reportError{}
 	startTime := time.Now()
 
 	// Test expectedToBeEnabled
@@ -401,6 +513,7 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 		if isEnabled != expectedToBeEnabled {
 			hasError = true
 			errors += fmt.Sprintf("      ✘ expectedToBeEnabled: expected %v but received %v\n", expectedToBeEnabled, isEnabled)
+			reportErrors = append(reportErrors, expectationReportError("flag", []interface{}{"expectedToBeEnabled"}, expectedToBeEnabled, isEnabled))
 		}
 	}
 
@@ -418,6 +531,7 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 		if !compareValues(variationValue, expectedVariation) {
 			hasError = true
 			errors += fmt.Sprintf("      ✘ expectedVariation: expected %v but received %v\n", expectedVariation, variationValue)
+			reportErrors = append(reportErrors, expectationReportError("variation", []interface{}{"expectedVariation"}, expectedVariation, variationValue))
 		}
 	}
 
@@ -461,6 +575,7 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 							actualJSON, _ := json.Marshal(actualValue)
 							errors += fmt.Sprintf("      ✘ expectedVariables.%s: expected %s but received %s\n",
 								variableKey, expectedStr, string(actualJSON))
+							reportErrors = append(reportErrors, expectationReportError("variable", []interface{}{"expectedVariables", variableKey}, expectedValue, string(actualJSON)))
 						}
 						continue
 					}
@@ -471,6 +586,7 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 			if !compareValues(actualValue, expectedValue) {
 				hasError = true
 				errors += fmt.Sprintf("      ✘ expectedVariables.%s: expected %v but received %v\n", variableKey, expectedValue, actualValue)
+				reportErrors = append(reportErrors, expectationReportError("variable", []interface{}{"expectedVariables", variableKey}, expectedValue, actualValue))
 			}
 		}
 	}
@@ -483,6 +599,7 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 				if !compareValues(actualValue, expectedValue) {
 					hasError = true
 					errors += fmt.Sprintf("      ✘ expectedEvaluations.flag.%s: expected %v but received %v\n", key, expectedValue, actualValue)
+					reportErrors = append(reportErrors, expectationReportError("evaluation", []interface{}{"expectedEvaluations", "flag", key}, expectedValue, actualValue))
 				}
 			}
 		}
@@ -494,6 +611,7 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 				if !compareValues(actualValue, expectedValue) {
 					hasError = true
 					errors += fmt.Sprintf("      ✘ expectedEvaluations.variation.%s: expected %v but received %v\n", key, expectedValue, actualValue)
+					reportErrors = append(reportErrors, expectationReportError("evaluation", []interface{}{"expectedEvaluations", "variation", key}, expectedValue, actualValue))
 				}
 			}
 		}
@@ -514,6 +632,7 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 					if !compareValues(actualValue, expectedValue) {
 						hasError = true
 						errors += fmt.Sprintf("      ✘ expectedEvaluations.variables.%s.%s: expected %v but received %v\n", variableKey, key, expectedValue, actualValue)
+						reportErrors = append(reportErrors, expectationReportError("evaluation", []interface{}{"expectedEvaluations", "variables", variableKey, key}, expectedValue, actualValue))
 					}
 				}
 			}
@@ -523,39 +642,17 @@ func RunTestFeatureChild(assertion map[string]interface{}, featureKey string, in
 	duration := time.Since(startTime).Seconds()
 
 	return AssertionResult{
-		HasError: hasError,
-		Errors:   errors,
-		Duration: duration,
+		HasError:     hasError,
+		Errors:       errors,
+		Duration:     duration,
+		ReportErrors: reportErrors,
 	}
 }
 
 // TestSegment tests a segment with the given assertion
 func RunTestSegment(assertion map[string]interface{}, segment map[string]interface{}, level string) AssertionResult {
-	context := featurevisor.Context{}
-	if ctx, ok := assertion["context"].(map[string]interface{}); ok {
-		context = featurevisor.Context(ctx)
-	}
-
-	conditions := segment["conditions"]
-
-	hasError := false
-	errors := ""
-	startTime := time.Now()
-
-	if expectedToMatch, ok := assertion["expectedToMatch"].(bool); ok {
-		actual := featurevisor.AllConditionsAreMatched(conditions, context)
-		if actual != expectedToMatch {
-			hasError = true
-			errors += fmt.Sprintf("      ✘ expectedToMatch: expected %v but received %v\n", expectedToMatch, actual)
-		}
-	}
-
-	duration := time.Since(startTime).Seconds()
-	return AssertionResult{
-		HasError: hasError,
-		Errors:   errors,
-		Duration: duration,
-	}
+	content := featurevisor.DatafileContent{SchemaVersion: "4", Revision: "segments", Features: map[string]featurevisor.Feature{}, Segments: map[string]featurevisor.Segment{}}
+	return runSegmentWithSDK(assertion, "subject", map[string]interface{}{"subject": segment}, content, level)
 }
 
 // Helper functions
@@ -608,12 +705,10 @@ func getEvaluationValue(evaluation featurevisor.Evaluation, key string) interfac
 		return nil
 	case "force":
 		return evaluation.Force
-	case "required":
-		return evaluation.Required
-	case "requiredFeatures":
-		return evaluation.RequiredFeatures
-	case "sticky":
-		return evaluation.Sticky
+	case "conditions":
+		return evaluation.Conditions
+	case "stickyFeature":
+		return evaluation.StickyFeature
 	case "variation":
 		return evaluation.Variation
 	case "variationValue":
@@ -642,6 +737,8 @@ func getEvaluationValue(evaluation featurevisor.Evaluation, key string) interfac
 		return nil
 	case "variableOverridePath":
 		return evaluation.VariableOverridePath
+	case "variableOverridePaths":
+		return evaluation.VariableOverridePaths
 	default:
 		return nil
 	}
@@ -759,15 +856,19 @@ func compareValues(actual, expected interface{}) bool {
 }
 
 // Common functions
-const noEnvironmentKey = "__no_environment__"
-
 func executeFeaturevisorCommand(featurevisorProjectPath string, args ...string) (string, error) {
 	cmdArgs := append([]string{"featurevisor"}, args...)
 	cmd := exec.Command("npx", cmdArgs...)
 	cmd.Dir = featurevisorProjectPath
-	output, err := cmd.CombinedOutput()
+	var diagnostics bytes.Buffer
+	cmd.Stderr = &diagnostics
+	output, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("command failed: npx %s\n%s", strings.Join(cmdArgs, " "), strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("command failed: npx %s\n%s", strings.Join(cmdArgs, " "), strings.TrimSpace(diagnostics.String()+"\n"+string(output)))
+	}
+	// Delegated warnings belong on stderr, never inside a JSON datafile.
+	if diagnostics.Len() > 0 {
+		fmt.Fprint(os.Stderr, diagnostics.String())
 	}
 
 	return strings.TrimSpace(string(output)), nil
@@ -794,9 +895,13 @@ func getConfig(featurevisorProjectPath string) map[string]interface{} {
 	return config
 }
 
-func getSegments(featurevisorProjectPath string) map[string]interface{} {
+func getSegments(featurevisorProjectPath string, set ...string) map[string]interface{} {
 	fmt.Println("Getting segments...")
-	segmentsOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, "list", "--segments", "--json")
+	args := []string{"list", "--segments", "--json"}
+	if len(set) > 0 && set[0] != "" {
+		args = append(args, "--set="+set[0])
+	}
+	segmentsOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, args...)
 	var segments []map[string]interface{}
 	if err := json.Unmarshal([]byte(segmentsOutput), &segments); err != nil {
 		fmt.Printf("failed to parse segments json: %v\n", err)
@@ -812,9 +917,13 @@ func getSegments(featurevisorProjectPath string) map[string]interface{} {
 	return segmentsByKey
 }
 
-func getTargets(featurevisorProjectPath string) []string {
+func getTargets(featurevisorProjectPath string, set ...string) []string {
 	fmt.Println("Getting targets...")
-	targetsOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, "list", "--targets", "--json")
+	args := []string{"list", "--targets", "--json"}
+	if len(set) > 0 && set[0] != "" {
+		args = append(args, "--set="+set[0])
+	}
+	targetsOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, args...)
 	var targets []map[string]interface{}
 	if err := json.Unmarshal([]byte(targetsOutput), &targets); err != nil {
 		fmt.Printf("failed to parse targets json: %v\n", err)
@@ -831,7 +940,7 @@ func getTargets(featurevisorProjectPath string) []string {
 	return targetKeys
 }
 
-func buildDatafileJSON(featurevisorProjectPath string, environment *string, inflate int, target *string) interface{} {
+func buildDatafileJSON(featurevisorProjectPath string, environment *string, inflate int, target *string, set ...string) interface{} {
 	args := []string{"build"}
 	if environment != nil {
 		args = append(args, fmt.Sprintf("--environment=%s", *environment))
@@ -842,10 +951,13 @@ func buildDatafileJSON(featurevisorProjectPath string, environment *string, infl
 	if target != nil {
 		args = append(args, fmt.Sprintf("--target=%s", *target))
 	}
+	if len(set) > 0 && set[0] != "" {
+		args = append(args, "--set="+set[0])
+	}
 	args = append(args, "--json")
 
 	datafileOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, args...)
-	var datafile interface{}
+	var datafile featurevisor.DatafileContent
 	if err := json.Unmarshal([]byte(datafileOutput), &datafile); err != nil {
 		fmt.Printf("failed to parse datafile json: %v\n", err)
 		os.Exit(1)
@@ -858,7 +970,7 @@ func buildDatafiles(featurevisorProjectPath string, environments []string, infla
 	datafilesByEnvironment := make(map[string]interface{})
 	for _, environment := range environments {
 		envCopy := environment
-		datafilesByEnvironment[environment] = buildDatafileJSON(
+		datafilesByEnvironment[datafileCacheKey(&envCopy)] = buildDatafileJSON(
 			featurevisorProjectPath,
 			&envCopy,
 			inflate,
@@ -869,20 +981,17 @@ func buildDatafiles(featurevisorProjectPath string, environments []string, infla
 }
 
 func datafileCacheKey(environment *string) string {
-	if environment == nil {
-		return noEnvironmentKey
-	}
-
-	return *environment
+	return selectionDatafileCacheKey(environment, nil)
 }
 
 func targetDatafileCacheKey(environment *string, target string) string {
-	base := "false"
-	if environment != nil {
-		base = *environment
-	}
+	return selectionDatafileCacheKey(environment, &target)
+}
 
-	return fmt.Sprintf("%s-target-%s", base, target)
+func selectionDatafileCacheKey(environment, target *string) string {
+	// A pair of nullable strings cannot fail JSON serialization.
+	encoded, _ := json.Marshal([2]*string{environment, target})
+	return string(encoded)
 }
 
 func datafileCacheKeyForAssertion(assertion map[string]interface{}, datafileCache map[string]interface{}) string {
@@ -906,11 +1015,12 @@ func buildDatafileCache(
 	config map[string]interface{},
 	inflate int,
 	selectedTargets []string,
+	set string,
 ) map[string]interface{} {
 	cache := make(map[string]interface{})
 	targetKeys := selectedTargets
 	if len(targetKeys) == 0 {
-		targetKeys = getTargets(featurevisorProjectPath)
+		targetKeys = getTargets(featurevisorProjectPath, set)
 	}
 
 	environments := []*string{nil}
@@ -926,7 +1036,7 @@ func buildDatafileCache(
 
 	for _, environment := range environments {
 		baseKey := datafileCacheKey(environment)
-		cache[baseKey] = buildDatafileJSON(featurevisorProjectPath, environment, inflate, nil)
+		cache[baseKey] = buildDatafileJSON(featurevisorProjectPath, environment, inflate, nil, set)
 
 		for _, targetKey := range targetKeys {
 			targetCopy := targetKey
@@ -935,6 +1045,7 @@ func buildDatafileCache(
 				environment,
 				inflate,
 				&targetCopy,
+				set,
 			)
 		}
 	}
@@ -953,24 +1064,33 @@ func getLoggerLevel(opts CLIOptions) string {
 }
 
 func getTests(featurevisorProjectPath string, opts CLIOptions) []map[string]interface{} {
-	args := []string{"list", "--tests", "--applyMatrix", "--json"}
+	args := []string{"list", "--tests", "--execution-protocol", "--applyMatrix", "--execution-metadata", "--json"}
 	if opts.KeyPattern != "" {
 		args = append(args, fmt.Sprintf("--keyPattern=%s", opts.KeyPattern))
 	}
 	if opts.AssertionPattern != "" {
 		args = append(args, fmt.Sprintf("--assertionPattern=%s", opts.AssertionPattern))
 	}
+	if opts.EntityType != "" {
+		args = append(args, fmt.Sprintf("--entityType=%s", opts.EntityType))
+	}
+	if opts.Set != "" {
+		args = append(args, "--set="+opts.Set)
+	}
 
 	testsOutput := mustExecuteFeaturevisorCommand(featurevisorProjectPath, args...)
-	var tests []map[string]interface{}
-	if err := json.Unmarshal([]byte(testsOutput), &tests); err != nil {
-		fmt.Printf("failed to parse tests json: %v\n", err)
+	tests, err := parseTestExecutionProtocol(testsOutput)
+	if err != nil {
+		fmt.Println(err.Error())
 		os.Exit(1)
 	}
 	return tests
 }
 
-func buildInstanceForAssertion(datafile interface{}, level string, assertion map[string]interface{}) *featurevisor.Featurevisor {
+func datafileContentFromRaw(datafile interface{}) featurevisor.DatafileContent {
+	if content, ok := datafile.(featurevisor.DatafileContent); ok {
+		return content
+	}
 	var datafileContent featurevisor.DatafileContent
 	if datafileBytes, err := json.Marshal(datafile); err == nil {
 		if err := json.Unmarshal(datafileBytes, &datafileContent); err != nil {
@@ -981,14 +1101,21 @@ func buildInstanceForAssertion(datafile interface{}, level string, assertion map
 		fmt.Printf("failed to marshal datafile for assertion: %v\n", err)
 		os.Exit(1)
 	}
+	return datafileContent
+}
+
+func buildInstanceForAssertion(datafile interface{}, level string, assertion map[string]interface{}) (*featurevisor.Featurevisor, *checkDiagnosticCollector) {
+	datafileContent := datafileContentFromRaw(datafile)
 
 	levelStr := featurevisor.LogLevel(level)
-	return featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
+	diagnostics := &checkDiagnosticCollector{}
+	instance := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
 		Datafile:        datafileContent,
 		LogLevel:        &levelStr,
 		Context:         contextFromAssertion(assertion),
 		StickyFeatures:  stickyFeaturesFromAssertion(assertion, "stickyFeatures"),
 		StickyVariables: stickyVariablesFromAssertion(assertion),
+		OnDiagnostic:    diagnostics.record,
 		Modules: []*featurevisor.FeaturevisorModule{
 			{
 				Name: "tester-module",
@@ -1001,6 +1128,7 @@ func buildInstanceForAssertion(datafile interface{}, level string, assertion map
 			},
 		},
 	})
+	return instance, diagnostics
 }
 
 func toContextMap(value interface{}) map[string]interface{} {
@@ -1021,17 +1149,18 @@ func cloneAssertion(assertion map[string]interface{}) map[string]interface{} {
 	return cloned
 }
 
-func runTest(opts CLIOptions) {
+func runTestLegacy(opts CLIOptions) {
 	featurevisorProjectPath := opts.ProjectDirectoryPath
 
 	config := getConfig(featurevisorProjectPath)
-	segmentsByKey := getSegments(featurevisorProjectPath)
+	segmentsByKey := getSegments(featurevisorProjectPath, opts.Set)
 
 	datafileCache := buildDatafileCache(
 		featurevisorProjectPath,
 		config,
 		opts.Inflate,
 		opts.Targets,
+		opts.Set,
 	)
 
 	fmt.Println()
@@ -1051,8 +1180,31 @@ func runTest(opts CLIOptions) {
 
 	for _, test := range tests {
 		testKey := test["key"].(string)
-		assertions := test["assertions"].([]interface{})
-		if _, hasFeature := test["feature"]; (hasFeature || test["variable"] != nil) && len(opts.Targets) > 0 {
+		discriminatorCount := 0
+		for _, field := range []string{"feature", "segment", "variable", "scenario"} {
+			if _, exists := test[field]; exists {
+				discriminatorCount++
+			}
+		}
+		if discriminatorCount != 1 {
+			failedTestsCount++
+			failedAssertionsCount++
+			if !opts.Quiet {
+				fmt.Printf("\nTesting: %s (0.00ms)\n", testKey)
+				fmt.Println("      ✘ test must contain exactly one of feature, segment, variable, or scenario")
+			}
+			continue
+		}
+		assertions, assertionsOK := test["assertions"].([]interface{})
+		if !assertionsOK || len(assertions) == 0 {
+			if _, scenario := test["scenario"]; scenario {
+				failedTestsCount++
+				failedAssertionsCount++
+				continue
+			}
+			continue
+		}
+		if _, hasFeature := test["feature"]; (hasFeature || test["variable"] != nil || test["scenario"] != nil) && len(opts.Targets) > 0 {
 			filtered := make([]interface{}, 0, len(assertions))
 			for _, raw := range assertions {
 				assertion, ok := raw.(map[string]interface{})
@@ -1086,7 +1238,7 @@ func runTest(opts CLIOptions) {
 					} else {
 
 						effectiveAssertion := cloneAssertion(assertionMap)
-						instance := buildInstanceForAssertion(datafile, level, effectiveAssertion)
+						instance, _ := buildInstanceForAssertion(datafile, level, effectiveAssertion)
 
 						// Show datafile if requested (matching TypeScript implementation)
 						if opts.ShowDatafile {
@@ -1111,16 +1263,31 @@ func runTest(opts CLIOptions) {
 							fmt.Println(string(datafileJSON))
 							fmt.Println("")
 						}
-						instance := buildInstanceForAssertion(datafile, level, assertionMap)
-						testResult = RunTestVariable(assertionMap, variableKey, instance, level)
+						datafileContent := datafileContentFromRaw(datafile)
+						instance, diagnostics := buildInstanceForAssertion(datafile, level, assertionMap)
+						testResult = RunTestVariable(assertionMap, variableKey, instance, diagnostics, datafileContent, segmentDefinitionsFromTest(test), level)
+						instance.Close()
+					}
+				} else if _, hasScenario := test["scenario"].(string); hasScenario {
+					selectedDatafileKey := datafileCacheKeyForAssertion(assertionMap, datafileCache)
+					datafile, ok := datafileCache[selectedDatafileKey]
+					if !ok {
+						testResult = missingDatafileAssertion(assertionMap, selectedDatafileKey)
+					} else {
+						if opts.ShowDatafile {
+							fmt.Println("")
+							datafileJSON, _ := json.MarshalIndent(datafile, "", "  ")
+							fmt.Println(string(datafileJSON))
+							fmt.Println("")
+						}
+						datafileContent := datafileContentFromRaw(datafile)
+						instance, diagnostics := buildInstanceForAssertion(datafile, level, assertionMap)
+						testResult = RunTestScenario(assertionMap, instance, diagnostics, datafileContent, segmentDefinitionsFromTest(test), level)
 						instance.Close()
 					}
 				} else if _, hasSegment := test["segment"]; hasSegment {
 					segmentKey := test["segment"].(string)
-					segment := segmentsByKey[segmentKey]
-					if segmentMap, ok := segment.(map[string]interface{}); ok {
-						testResult = RunTestSegment(assertionMap, segmentMap, level)
-					}
+					testResult = runSegmentSpec(assertionMap, segmentKey, test, segmentsByKey, datafileCache, level)
 				}
 
 				testDuration += testResult.Duration

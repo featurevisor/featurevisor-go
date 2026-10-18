@@ -18,8 +18,7 @@ func TestModulePipelineUsesCanonicalPhaseOrder(t *testing.T) {
 	order := []string{}
 	module := func(name string) *FeaturevisorModule {
 		return &FeaturevisorModule{
-			Name:   name,
-			Before: func(options EvaluateOptions) EvaluateOptions { order = append(order, "before:"+name); return options },
+			Name: name,
 			BeforeEvaluation: func(options EvaluateOptions) EvaluateOptions {
 				order = append(order, "beforeEvaluation:"+name)
 				return options
@@ -28,15 +27,11 @@ func TestModulePipelineUsesCanonicalPhaseOrder(t *testing.T) {
 				order = append(order, "afterEvaluation:"+name)
 				return evaluation
 			},
-			After: func(evaluation Evaluation, options EvaluateOptions) Evaluation {
-				order = append(order, "after:"+name)
-				return evaluation
-			},
 		}
 	}
 	f := CreateFeaturevisor(FeaturevisorOptions{Modules: []*FeaturevisorModule{module("first"), module("second")}})
 	f.EvaluateFlag("missing", Context{}, OverrideOptions{})
-	expected := []string{"before:first", "before:second", "beforeEvaluation:first", "beforeEvaluation:second", "afterEvaluation:first", "afterEvaluation:second", "after:first", "after:second"}
+	expected := []string{"beforeEvaluation:first", "beforeEvaluation:second", "afterEvaluation:first", "afterEvaluation:second"}
 	if !reflect.DeepEqual(order, expected) {
 		t.Fatalf("unexpected module order: %#v", order)
 	}

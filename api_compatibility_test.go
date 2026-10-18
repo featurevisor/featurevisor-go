@@ -353,12 +353,6 @@ func TestProductionDatafileFeatures(t *testing.T) {
 						]
 					}
 				],
-				"ranges": [
-					[
-						0,
-						50000
-					]
-				],
 				"variablesSchema": {
 					"color": {
 						"type": "string",
@@ -1001,10 +995,9 @@ func TestProductionDatafileFeatures(t *testing.T) {
 		}
 	})
 
-	// Test qux feature based on test specs
+	// Legacy ranges cannot override the ordinary traffic percentage.
 	t.Run("qux", func(t *testing.T) {
-		// Test with Netherlands context (should get variation 'b' based on allocation)
-		// Using bucket value 70000 (70%) to get variation 'b'
+		// A bucket inside legacy ranges but outside traffic remains disabled.
 		instance := CreateFeaturevisor(FeaturevisorOptions{
 			Datafile: datafile,
 			Context: Context{
@@ -1015,7 +1008,6 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				{
 					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
-						// Force bucket value to 70000 (70%) to get variation 'b'
 						return 70000
 					},
 				},
@@ -1023,23 +1015,25 @@ func TestProductionDatafileFeatures(t *testing.T) {
 		})
 
 		enabled := instance.IsEnabled("qux")
-		if !enabled {
-			t.Error("Expected qux to be enabled for NL")
+		if enabled {
+			t.Error("Expected qux to be disabled outside ordinary traffic for NL")
+		}
+		if instance.EvaluateFlag("qux").Reason != EvaluationReasonNoMatch {
+			t.Error("Expected ordinary no_match reason when legacy ranges are ignored")
 		}
 
 		variation := instance.GetVariation("qux")
-		if variation == nil {
-			t.Error("Expected variation to be returned for qux")
+		if variation != nil {
+			t.Error("Expected no variation for disabled qux")
 		}
 
 		// Test variables
 		fooConfig := instance.GetVariable("qux", "fooConfig")
-		if fooConfig == nil {
-			t.Error("Expected fooConfig variable to be returned")
+		if fooConfig != nil {
+			t.Error("Expected no variable value for disabled qux")
 		}
 
-		// Test with Germany context (should get variation 'b' based on allocation)
-		// Using bucket value 70000 (70%) to get variation 'b'
+		// The fallback traffic rule also ignores legacy ranges.
 		instanceDE := CreateFeaturevisor(FeaturevisorOptions{
 			Datafile: datafile,
 			Context: Context{
@@ -1050,7 +1044,6 @@ func TestProductionDatafileFeatures(t *testing.T) {
 				{
 					Name: "test-module",
 					BucketValue: func(options ConfigureBucketValueOptions) int {
-						// Force bucket value to 70000 (70%) to get variation 'b'
 						return 70000
 					},
 				},
@@ -1058,8 +1051,8 @@ func TestProductionDatafileFeatures(t *testing.T) {
 		})
 
 		enabledDE := instanceDE.IsEnabled("qux")
-		if !enabledDE {
-			t.Error("Expected qux to be enabled for DE")
+		if enabledDE {
+			t.Error("Expected qux to be disabled outside ordinary traffic for DE")
 		}
 	})
 }

@@ -78,6 +78,10 @@ const (
 	OperatorNotEquals                 Operator = "notEquals"
 	OperatorExists                    Operator = "exists"
 	OperatorNotExists                 Operator = "notExists"
+	OperatorIsNull                    Operator = "isNull"
+	OperatorNotNull                   Operator = "notNull"
+	OperatorEmpty                     Operator = "empty"
+	OperatorNotEmpty                  Operator = "notEmpty"
 	OperatorGreaterThan               Operator = "greaterThan"
 	OperatorGreaterThanOrEquals       Operator = "greaterThanOrEquals"
 	OperatorLessThan                  Operator = "lessThan"
@@ -96,6 +100,8 @@ const (
 	OperatorAfter                     Operator = "after"
 	OperatorIncludes                  Operator = "includes"
 	OperatorNotIncludes               Operator = "notIncludes"
+	OperatorIncludesAny               Operator = "includesAny"
+	OperatorNotIncludesAny            Operator = "notIncludesAny"
 	OperatorMatches                   Operator = "matches"
 	OperatorNotMatches                Operator = "notMatches"
 	OperatorIn                        Operator = "in"
@@ -169,28 +175,47 @@ type FeatureKey = string
 
 // Feature represents a feature in the datafile
 type Feature struct {
+	Conditions             Condition                      `json:"conditions,omitempty"`
 	Key                    *FeatureKey                    `json:"key,omitempty"`
 	Hash                   *string                        `json:"hash,omitempty"`
 	Deprecated             *bool                          `json:"deprecated,omitempty"`
-	Required               []Required                     `json:"required,omitempty"`
-	RequiredFeatures       []Required                     `json:"requiredFeatures,omitempty"`
+	RequiredFeatures       []RequiredFeature              `json:"requiredFeatures,omitempty"`
+	RequiredVariables      []RequiredVariable             `json:"-"`
 	VariablesSchema        map[VariableKey]VariableSchema `json:"variablesSchema,omitempty"`
 	DisabledVariationValue *VariationValue                `json:"disabledVariationValue,omitempty"`
 	Variations             []Variation                    `json:"variations,omitempty"`
 	BucketBy               BucketBy                       `json:"bucketBy"`
 	Traffic                []Traffic                      `json:"traffic"`
 	Force                  []Force                        `json:"force,omitempty"`
-	Ranges                 []Range                        `json:"ranges,omitempty"`
+}
+
+func (feature *Feature) UnmarshalJSON(data []byte) error {
+	type alias Feature
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*feature = Feature(decoded)
+	if raw, exists := fields["conditions"]; exists && string(raw) == "null" {
+		feature.Conditions = nullSelector{}
+	}
+	return nil
 }
 
 // ParsedFeature represents a parsed feature
 type ParsedFeature struct {
+	Conditions             Condition                      `json:"conditions,omitempty"`
 	Key                    FeatureKey                     `json:"key"`
 	Archived               *bool                          `json:"archived,omitempty"`
 	Deprecated             *bool                          `json:"deprecated,omitempty"`
 	Description            string                         `json:"description"`
 	Tags                   []Tag                          `json:"tags"`
-	Required               []Required                     `json:"required,omitempty"`
+	RequiredFeatures       []RequiredFeature              `json:"requiredFeatures,omitempty"`
+	RequiredVariables      []RequiredVariable             `json:"-"`
 	BucketBy               BucketBy                       `json:"bucketBy"`
 	DisabledVariationValue *VariationValue                `json:"disabledVariationValue,omitempty"`
 	VariablesSchema        map[VariableKey]VariableSchema `json:"variablesSchema,omitempty"`
@@ -219,21 +244,45 @@ type StickyVariables map[GlobalVariableKey]VariableValue
 // EvaluatedVariables stores evaluated global variable values.
 type EvaluatedVariables map[GlobalVariableKey]VariableValue
 
-// RequiredWithVariation represents a required feature with variation
-type RequiredWithVariation struct {
-	Key       FeatureKey     `json:"key"`
-	Variation VariationValue `json:"variation"`
-}
-
-// RequiredFeature describes the canonical requiredFeatures object form.
-type RequiredFeature struct {
+// RequiredFeatureOptions describes the canonical requiredFeatures object form.
+type RequiredFeatureOptions struct {
 	Feature   FeatureKey      `json:"feature"`
 	Enabled   *bool           `json:"enabled,omitempty"`
 	Variation *VariationValue `json:"variation,omitempty"`
 }
 
-// Required represents a required feature
-type Required interface{}
+// RequiredFeature is a feature prerequisite leaf or recursive and, or, or not group.
+type RequiredFeature interface{}
+
+// RequiredVariableOptions describes one evaluated variable prerequisite.
+type RequiredVariableOptions struct {
+	Feature    *FeatureKey    `json:"feature,omitempty"`
+	Variable   string         `json:"variable"`
+	Path       interface{}    `json:"path,omitempty"`
+	Operator   Operator       `json:"operator"`
+	Value      ConditionValue `json:"value,omitempty"`
+	RegexFlags *string        `json:"regexFlags,omitempty"`
+	valueSet   bool
+}
+
+// UnmarshalJSON preserves whether a required variable operand was supplied.
+func (required *RequiredVariableOptions) UnmarshalJSON(data []byte) error {
+	type alias RequiredVariableOptions
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*required = RequiredVariableOptions(decoded)
+	_, required.valueSet = fields["value"]
+	return nil
+}
+
+// RequiredVariable is an evaluated variable prerequisite leaf or recursive group.
+type RequiredVariable interface{}
 
 // Weight represents a weight value (0 to 100)
 type Weight = float64
@@ -249,6 +298,7 @@ type RuleKey = string
 
 // Rule represents a rule
 type Rule struct {
+	Conditions        Condition                          `json:"conditions,omitempty"`
 	Key               RuleKey                            `json:"key"`
 	Description       *string                            `json:"description,omitempty"`
 	Segments          interface{}                        `json:"segments"` // GroupSegment | GroupSegment[]
@@ -333,8 +383,9 @@ type Allocation struct {
 
 // Traffic represents traffic configuration
 type Traffic struct {
+	Conditions        Condition                          `json:"conditions,omitempty"`
 	Key               RuleKey                            `json:"key"`
-	Segments          interface{}                        `json:"segments"` // GroupSegment | GroupSegment[] | "*"
+	Segments          interface{}                        `json:"segments,omitempty"` // GroupSegment | GroupSegment[] | "*"
 	Percentage        Percentage                         `json:"percentage"`
 	Enabled           *bool                              `json:"enabled,omitempty"`
 	Variation         *VariationValue                    `json:"variation,omitempty"`
@@ -360,10 +411,12 @@ const (
 	VariableTypeBoolean VariableType = "boolean"
 	VariableTypeString  VariableType = "string"
 	VariableTypeInteger VariableType = "integer"
-	VariableTypeDouble  VariableType = "double"
-	VariableTypeArray   VariableType = "array"
-	VariableTypeObject  VariableType = "object"
-	VariableTypeJSON    VariableType = "json"
+	VariableTypeNumber  VariableType = "number"
+	// VariableTypeDouble is the earlier spelling of VariableTypeNumber. Both read the same.
+	VariableTypeDouble VariableType = "double"
+	VariableTypeArray  VariableType = "array"
+	VariableTypeObject VariableType = "object"
+	VariableTypeJSON   VariableType = "json"
 )
 
 // VariableValue represents the value of a variable
@@ -413,24 +466,71 @@ type VariableOverrideConditions struct {
 
 // VariableOverride represents a variable override
 type VariableOverride struct {
-	Key              *string       `json:"key,omitempty"`
-	KeyPath          []string      `json:"keyPath,omitempty"`
-	Value            VariableValue `json:"value"`
-	Conditions       interface{}   `json:"conditions,omitempty"` // Condition | Condition[]
-	Segments         interface{}   `json:"segments,omitempty"`   // GroupSegment | GroupSegment[]
-	RequiredFeatures []Required    `json:"requiredFeatures,omitempty"`
+	Key               *string            `json:"key,omitempty"`
+	KeyPath           []string           `json:"keyPath,omitempty"`
+	Value             VariableValue      `json:"value"`
+	Conditions        interface{}        `json:"conditions,omitempty"` // Condition | Condition[]
+	Segments          interface{}        `json:"segments,omitempty"`   // GroupSegment | GroupSegment[]
+	RequiredFeatures  []RequiredFeature  `json:"requiredFeatures,omitempty"`
+	RequiredVariables []RequiredVariable `json:"-"`
+}
+
+// VariableMutationPathPart is a compiled object key, array index, or first item selector.
+type VariableMutationPathPart interface{}
+
+// VariableMutationOperation is one immutable compiled override operation.
+type VariableMutationOperation struct {
+	Op       string        `json:"op"`
+	Path     interface{}   `json:"path"`
+	Value    VariableValue `json:"value,omitempty"`
+	ValueSet bool          `json:"-"`
+	decoded  bool
+}
+
+// UnmarshalJSON preserves explicit null mutation operands.
+func (operation *VariableMutationOperation) UnmarshalJSON(data []byte) error {
+	type alias VariableMutationOperation
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*operation = VariableMutationOperation(decoded)
+	_, operation.ValueSet = fields["value"]
+	operation.decoded = true
+	return nil
+}
+
+// VariableOverrideStep is one forward only step in an accumulating override program.
+type VariableOverrideStep struct {
+	Key               string                      `json:"key"`
+	KeyPath           []string                    `json:"keyPath,omitempty"`
+	Conditions        interface{}                 `json:"conditions,omitempty"`
+	Segments          interface{}                 `json:"segments,omitempty"`
+	RequiredFeatures  []RequiredFeature           `json:"requiredFeatures,omitempty"`
+	RequiredVariables []RequiredVariable          `json:"-"`
+	Operations        []VariableMutationOperation `json:"operations"`
+	OnMatch           interface{}                 `json:"onMatch"`
+	OnMiss            interface{}                 `json:"onMiss"`
 }
 
 // GlobalVariable represents an independently evaluated variable in a datafile.
 type GlobalVariable struct {
-	Hash                   *string            `json:"hash,omitempty"`
-	Deprecated             *bool              `json:"deprecated,omitempty"`
-	Type                   VariableType       `json:"type,omitempty"`
-	DefaultValue           VariableValue      `json:"defaultValue"`
-	DisabledValue          VariableValue      `json:"disabledValue,omitempty"`
-	UseDefaultWhenDisabled bool               `json:"useDefaultWhenDisabled,omitempty"`
-	RequiredFeatures       []Required         `json:"requiredFeatures,omitempty"`
-	Overrides              []VariableOverride `json:"overrides,omitempty"`
+	Conditions             Condition              `json:"conditions,omitempty"`
+	Compose                interface{}            `json:"compose,omitempty"`
+	Hash                   *string                `json:"hash,omitempty"`
+	Deprecated             *bool                  `json:"deprecated,omitempty"`
+	Type                   VariableType           `json:"type,omitempty"`
+	DefaultValue           VariableValue          `json:"defaultValue"`
+	DisabledValue          VariableValue          `json:"disabledValue,omitempty"`
+	UseDefaultWhenDisabled bool                   `json:"useDefaultWhenDisabled,omitempty"`
+	RequiredFeatures       []RequiredFeature      `json:"requiredFeatures,omitempty"`
+	RequiredVariables      []RequiredVariable     `json:"-"`
+	Overrides              []VariableOverride     `json:"overrides,omitempty"`
+	OverrideProgram        []VariableOverrideStep `json:"overrideProgram,omitempty"`
 	defaultValueSet        bool
 	disabledValueSet       bool
 }
@@ -446,6 +546,9 @@ func (variable *GlobalVariable) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*variable = GlobalVariable(decoded)
+	if raw, exists := fields["conditions"]; exists && string(raw) == "null" {
+		variable.Conditions = nullSelector{}
+	}
 	_, variable.defaultValueSet = fields["defaultValue"]
 	_, variable.disabledValueSet = fields["disabledValue"]
 	return nil

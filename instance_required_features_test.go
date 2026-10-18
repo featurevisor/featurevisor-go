@@ -25,7 +25,7 @@ func TestRequiredFeaturesSimple(t *testing.T) {
 			"myKey": {
 				"key": "myKey",
 				"bucketBy": "userId",
-				"required": ["requiredKey"],
+				"requiredFeatures": ["requiredKey"],
 				"traffic": [
 					{
 						"key": "1",
@@ -73,7 +73,7 @@ func TestRequiredFeaturesSimple(t *testing.T) {
 			"myKey": {
 				"key": "myKey",
 				"bucketBy": "userId",
-				"required": ["requiredKey"],
+				"requiredFeatures": ["requiredKey"],
 				"traffic": [
 					{
 						"key": "1",
@@ -129,9 +129,9 @@ func TestRequiredFeaturesWithVariation(t *testing.T) {
 			"myKey": {
 				"key": "myKey",
 				"bucketBy": "userId",
-				"required": [
+				"requiredFeatures": [
 					{
-						"key": "requiredKey",
+						"feature": "requiredKey",
 						"variation": "control"
 					}
 				],
@@ -188,9 +188,9 @@ func TestRequiredFeaturesWithVariation(t *testing.T) {
 			"myKey": {
 				"key": "myKey",
 				"bucketBy": "userId",
-				"required": [
+				"requiredFeatures": [
 					{
-						"key": "requiredKey",
+						"feature": "requiredKey",
 						"variation": "treatment"
 					}
 				],

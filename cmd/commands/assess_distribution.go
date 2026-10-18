@@ -3,12 +3,11 @@ package commands
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
-	"github.com/featurevisor/featurevisor-go/v3"
+	"github.com/featurevisor/featurevisor-go/v4"
 )
 
 // UUID_LENGTHS matches the TypeScript implementation
@@ -83,34 +82,27 @@ func printCounts(evaluations map[interface{}]int, n int, sortResults bool) {
 }
 
 // runAssessDistribution runs the assess-distribution command
-func runAssessDistribution(opts CLIOptions) {
-	featurevisorProjectPath := opts.ProjectDirectoryPath
-
-	if opts.Environment == "" {
-		fmt.Println("Environment is required")
-		return
-	}
-
+func runAssessDistribution(opts CLIOptions) error {
 	if opts.Feature == "" {
-		fmt.Println("Feature is required")
-		return
+		return fmt.Errorf("--feature is required")
 	}
-
-	if len(opts.Targets) > 1 {
-		for _, target := range opts.Targets {
-			selected := opts
-			selected.Targets = []string{target}
-			runAssessDistribution(selected)
+	context, err := evaluationContext(opts)
+	if err != nil {
+		return err
+	}
+	selections, err := resolveEvaluationSelections(opts)
+	if err != nil {
+		return err
+	}
+	for _, selected := range selections {
+		if err := assessDistributionSelection(selected, context); err != nil {
+			return err
 		}
-		return
 	}
+	return nil
+}
 
-	var context featurevisor.Context
-	if opts.Context != "" {
-		json.Unmarshal([]byte(opts.Context), &context)
-	} else {
-		context = make(featurevisor.Context)
-	}
+func assessDistributionSelection(opts CLIOptions, context featurevisor.Context) error {
 	populateUuid := opts.PopulateUuid
 
 	levelStr := getLoggerLevel(opts)
@@ -119,18 +111,16 @@ func runAssessDistribution(opts CLIOptions) {
 	if len(opts.Targets) == 1 {
 		target = &opts.Targets[0]
 	}
-	datafile := buildDatafileJSON(featurevisorProjectPath, &opts.Environment, opts.Inflate, target)
-
-	// Convert datafile to proper format
-	var datafileContent featurevisor.DatafileContent
-	if datafileBytes, err := json.Marshal(datafile); err == nil {
-		json.Unmarshal(datafileBytes, &datafileContent)
+	datafileContent, _, err := buildEvaluationDatafile(opts)
+	if err != nil {
+		return err
 	}
 
 	instance := featurevisor.CreateFeaturevisor(featurevisor.FeaturevisorOptions{
 		Datafile: datafileContent,
 		LogLevel: &level,
 	})
+	defer instance.Close()
 
 	// Check if feature has variations
 	feature := instance.GetFeature(opts.Feature)
@@ -145,6 +135,9 @@ func runAssessDistribution(opts CLIOptions) {
 
 	// Print header matching TypeScript format
 	fmt.Println("\nAssessing distribution for feature:", opts.Feature, "...")
+	if opts.Set != "" {
+		fmt.Printf("Set: %s\n", opts.Set)
+	}
 	if target != nil {
 		fmt.Printf("Target: %s\n", *target)
 	}
@@ -201,4 +194,5 @@ func runAssessDistribution(opts CLIOptions) {
 		fmt.Println("\n\nVariation evaluations:")
 		printCounts(variationEvaluations, opts.N, true)
 	}
+	return nil
 }

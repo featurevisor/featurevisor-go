@@ -1,12 +1,16 @@
 package featurevisor
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
 
 // childOptions contains options for creating a child instance
 type childOptions struct {
 	Parent          *Featurevisor
 	Context         Context
-	Sticky          *StickyFeatures
+	StickyFeatures  *StickyFeatures
 	StickyVariables *StickyVariables
 }
 
@@ -17,13 +21,15 @@ type childParentSubscription struct {
 
 // FeaturevisorChild represents a child Featurevisor instance
 type FeaturevisorChild struct {
+	stateMu             sync.RWMutex
 	parent              *Featurevisor
 	context             Context
-	sticky              *StickyFeatures
+	stickyFeatures      *StickyFeatures
 	stickyVariables     *StickyVariables
 	emitter             *emitter
 	parentSubscriptions []childParentSubscription
 	nextSubscriptionID  uint64
+	stateGeneration     atomic.Uint64
 }
 
 // newFeaturevisorChild creates a new child instance.
@@ -31,7 +37,7 @@ func newFeaturevisorChild(options childOptions) *FeaturevisorChild {
 	return &FeaturevisorChild{
 		parent:          options.Parent,
 		context:         options.Context,
-		sticky:          options.Sticky,
+		stickyFeatures:  options.StickyFeatures,
 		stickyVariables: options.StickyVariables,
 		emitter:         newEmitter(),
 	}
@@ -70,30 +76,39 @@ func (c *FeaturevisorChild) On(eventName EventName, callback EventCallback) Unsu
 
 // SetStickyFeatures sets sticky feature evaluations on the child.
 func (c *FeaturevisorChild) SetStickyFeatures(sticky StickyFeatures, replace ...bool) {
+	c.stateMu.Lock()
 	replaceValue := len(replace) > 0 && replace[0]
 	previousStickyFeatures := StickyFeatures{}
-	if c.sticky != nil {
-		previousStickyFeatures = *c.sticky
+	if c.stickyFeatures != nil {
+		previousStickyFeatures = *c.stickyFeatures
 	}
 	if replaceValue {
-		c.sticky = &sticky
+		next := StickyFeatures{}
+		for key, value := range sticky {
+			next[key] = value
+		}
+		c.stickyFeatures = &next
 	} else {
 		newSticky := StickyFeatures{}
-		if c.sticky != nil {
-			for key, value := range *c.sticky {
+		if c.stickyFeatures != nil {
+			for key, value := range *c.stickyFeatures {
 				newSticky[key] = value
 			}
 		}
 		for key, value := range sticky {
 			newSticky[key] = value
 		}
-		c.sticky = &newSticky
+		c.stickyFeatures = &newSticky
 	}
-	c.emitter.Trigger(EventNameStickyFeaturesSet, EventDetails(getParamsForStickyFeaturesSetEvent(previousStickyFeatures, *c.sticky, replaceValue)))
+	c.stateGeneration.Add(1)
+	params := getParamsForStickyFeaturesSetEvent(previousStickyFeatures, *c.stickyFeatures, replaceValue)
+	c.stateMu.Unlock()
+	c.emitter.Trigger(EventNameStickyFeaturesSet, EventDetails(params))
 }
 
 // SetStickyVariables sets sticky global variable values on the child.
 func (c *FeaturevisorChild) SetStickyVariables(sticky StickyVariables, replace ...bool) {
+	c.stateMu.Lock()
 	replaceValue := len(replace) > 0 && replace[0]
 	next := StickyVariables{}
 	if !replaceValue && c.stickyVariables != nil {
@@ -105,6 +120,8 @@ func (c *FeaturevisorChild) SetStickyVariables(sticky StickyVariables, replace .
 		next[key] = value
 	}
 	c.stickyVariables = &next
+	c.stateGeneration.Add(1)
+	c.stateMu.Unlock()
 	c.emitter.Trigger(EventNameStickyVariablesSet, EventDetails{"variables": mapKeys(next), "replaced": replaceValue})
 }
 
@@ -114,37 +131,44 @@ func (c *FeaturevisorChild) Close() {
 		subscription.unsubscribe()
 	}
 	c.parentSubscriptions = nil
+	c.stateGeneration.Add(1)
 	c.emitter.ClearAll()
 }
 
 // SetContext sets the context
 func (c *FeaturevisorChild) SetContext(context Context, replace ...bool) {
+	c.stateMu.Lock()
 	replaceValue := false
 	if len(replace) > 0 {
 		replaceValue = replace[0]
 	}
 
 	if replaceValue {
-		c.context = context
+		c.context = copyContext(context)
 	} else {
 		// Merge context
 		for key, value := range context {
 			c.context[key] = value
 		}
 	}
+	c.stateGeneration.Add(1)
+	updatedContext := copyContext(c.context)
+	c.stateMu.Unlock()
 
 	c.emitter.Trigger(EventNameContextSet, EventDetails{
-		"context":  c.context,
+		"context":  updatedContext,
 		"replaced": replaceValue,
 	})
 }
 
 // GetContext returns the context
 func (c *FeaturevisorChild) GetContext(context Context) Context {
+	c.stateMu.RLock()
 	merged := Context{}
 	for key, value := range c.context {
 		merged[key] = value
 	}
+	c.stateMu.RUnlock()
 	for key, value := range context {
 		merged[key] = value
 	}
@@ -154,19 +178,25 @@ func (c *FeaturevisorChild) GetContext(context Context) Context {
 
 // getEvaluationDependencies gets evaluation dependencies
 func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options OverrideOptions) evaluateDependencies {
-	var sticky *StickyFeatures
-	if options.sticky != nil {
-		sticky = options.sticky
+	storedContext := c.GetContext(nil)
+	effectiveContext := copyContext(storedContext)
+	for key, value := range context {
+		effectiveContext[key] = value
+	}
+	c.stateMu.RLock()
+	var stickyFeatures *StickyFeatures
+	if options.stickyFeatures != nil {
+		stickyFeatures = options.stickyFeatures
 	} else {
-		sticky = c.sticky
+		stickyFeatures = c.stickyFeatures
 	}
 
-	return evaluateDependencies{
-		Context:                        c.GetContext(context),
+	dependencies := evaluateDependencies{
+		Context:                        effectiveContext,
 		diagnosticReporter:             c.parent.diagnostics,
 		modulesManager:                 c.parent.modulesManager,
-		instanceEvaluationDataProvider: c.parent.instanceEvaluationDataProvider,
-		sticky:                         sticky,
+		instanceEvaluationDataProvider: c.parent.dataProvider(),
+		stickyFeatures:                 stickyFeatures,
 		stickyVariables: func() *StickyVariables {
 			if options.stickyVariables != nil {
 				return options.stickyVariables
@@ -177,6 +207,39 @@ func (c *FeaturevisorChild) getEvaluationDependencies(context Context, options O
 		DefaultVariableValue:    options.DefaultVariableValue,
 		DefaultVariableValueSet: options.DefaultVariableValueSet,
 	}
+	c.stateMu.RUnlock()
+	version := func() uint64 { return c.parent.stateGeneration.Load()*0x9e3779b97f4a7c15 ^ c.stateGeneration.Load() }
+	dependencies.storedContextSnapshot = copyContext(storedContext)
+	dependencies.refreshStickyVariables = func() *StickyVariables {
+		if options.stickyVariables != nil {
+			return options.stickyVariables
+		}
+		c.stateMu.RLock()
+		defer c.stateMu.RUnlock()
+		return c.stickyVariables
+	}
+	dependencies.seenStateVersion = version()
+	dependencies.stateVersion = version
+	dependencies.refreshState = func(current *evaluateDependencies) {
+		nextVersion := version()
+		if nextVersion == current.seenStateVersion {
+			return
+		}
+		nextContext := c.GetContext(nil)
+		c.stateMu.RLock()
+		mergeChangedStoredContext(current.Context, current.storedContextSnapshot, nextContext, context)
+		current.storedContextSnapshot = copyContext(nextContext)
+		if options.stickyFeatures == nil {
+			current.stickyFeatures = c.stickyFeatures
+		}
+		if options.stickyVariables == nil {
+			current.stickyVariables = c.stickyVariables
+		}
+		current.instanceEvaluationDataProvider = c.parent.dataProvider()
+		current.seenStateVersion = nextVersion
+		c.stateMu.RUnlock()
+	}
+	return dependencies
 }
 
 func mapKeys(values StickyVariables) []string {
@@ -196,7 +259,7 @@ func (c *FeaturevisorChild) EvaluateGlobalVariable(variableKey string, args ...i
 
 // GetGlobalVariable gets an independently defined variable on the child.
 func (c *FeaturevisorChild) GetGlobalVariable(variableKey string, args ...interface{}) VariableValue {
-	return getGlobalVariableValue(c.EvaluateGlobalVariable(variableKey, args...))
+	return normalizedGetterValue(c.EvaluateGlobalVariable(variableKey, args...), c.parent.diagnostics)
 }
 
 func (c *FeaturevisorChild) GetGlobalVariableBoolean(variableKey string, args ...interface{}) *bool {
@@ -445,7 +508,7 @@ func (c *FeaturevisorChild) EvaluateVariable(featureKey string, variableKey stri
 func (c *FeaturevisorChild) GetVariable(featureKey string, variableKey string, args ...interface{}) VariableValue {
 	defer func() {
 		if r := recover(); r != nil {
-			c.parent.diagnostics.Error("getVariable", logDetails{
+			c.parent.diagnostics.Error("getVariable failed", logDetails{
 				"featureKey":  featureKey,
 				"variableKey": variableKey,
 				"error":       r,
@@ -469,8 +532,8 @@ func (c *FeaturevisorChild) GetVariable(featureKey string, variableKey string, a
 
 	evaluation := c.evaluateVariable(featureKey, VariableKey(variableKey), contextValue, optionsValue)
 
-	if evaluation.VariableValue != nil {
-		return evaluation.VariableValue
+	if evaluation.variableValueSet || evaluation.VariableValue != nil {
+		return normalizedGetterValue(evaluation, c.parent.diagnostics)
 	}
 
 	return nil

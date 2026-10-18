@@ -3,9 +3,83 @@ package featurevisor
 import (
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
+
+var portableTimestamp = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$`)
+
+func normalizePortableRegex(pattern string) string {
+	inside := map[byte]string{'d': "0-9", 'D': `\x{0}-\x{2F}\x{3A}-\x{10FFFF}`, 'w': "A-Za-z0-9_", 'W': `\x{0}-\x{2F}\x{3A}-\x{40}\x{5B}-\x{5E}\x{60}\x{7B}-\x{10FFFF}`}
+	outside := map[byte]string{'d': "[0-9]", 'D': "[^0-9]", 'w': "(?-i:[A-Za-z0-9_])", 'W': "(?-i:[^A-Za-z0-9_])"}
+	var result strings.Builder
+	result.Grow(len(pattern))
+	inClass := false
+	for index := 0; index < len(pattern); index++ {
+		char := pattern[index]
+		if char == '\\' && index+1 < len(pattern) {
+			index++
+			code := pattern[index]
+			replacement := outside[code]
+			if inClass {
+				replacement = inside[code]
+			}
+			if replacement == "" {
+				result.WriteByte('\\')
+				result.WriteByte(code)
+			} else {
+				result.WriteString(replacement)
+			}
+			continue
+		}
+		if char == '[' && !inClass {
+			inClass = true
+		} else if char == ']' && inClass {
+			inClass = false
+		}
+		result.WriteByte(char)
+	}
+	return result.String()
+}
+
+func parsePortableDate(value interface{}) (time.Time, bool) {
+	var parsed time.Time
+	switch v := value.(type) {
+	case time.Time:
+		_, offset := v.Zone()
+		if v.Year() < 1 || v.Year() > 9999 || offset < -14*3600 || offset > 14*3600 {
+			return time.Time{}, false
+		}
+		parsed = v
+	case string:
+		if !portableTimestamp.MatchString(v) {
+			return time.Time{}, false
+		}
+		if v[:4] == "0000" {
+			return time.Time{}, false
+		}
+		if len(v) >= 6 && v[len(v)-1] != 'Z' {
+			hour, _ := strconv.Atoi(v[len(v)-5 : len(v)-3])
+			minute, _ := strconv.Atoi(v[len(v)-2:])
+			if hour > 14 || minute > 59 || (hour == 14 && minute != 0) {
+				return time.Time{}, false
+			}
+		}
+		var err error
+		parsed, err = time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			return time.Time{}, false
+		}
+	default:
+		return time.Time{}, false
+	}
+	parsed = parsed.UTC().Truncate(time.Millisecond)
+	if parsed.Year() < 1 || parsed.Year() > 9999 {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
 
 func numericValue(value interface{}) (float64, bool) {
 	switch v := value.(type) {
@@ -39,12 +113,8 @@ func numericValue(value interface{}) (float64, bool) {
 }
 
 func primitiveSliceValues(value interface{}) ([]interface{}, bool) {
-	if value == nil {
-		return nil, false
-	}
-
-	reflected := reflect.ValueOf(value)
-	if reflected.Kind() != reflect.Array && reflected.Kind() != reflect.Slice {
+	reflected, ok := conditionArray(value)
+	if !ok {
 		return nil, false
 	}
 
@@ -62,7 +132,7 @@ func primitiveSliceValues(value interface{}) ([]interface{}, bool) {
 
 func strictPrimitiveEqual(left interface{}, right interface{}) bool {
 	if left == nil || right == nil {
-		return left == nil && right == nil
+		return conditionValueIsNull(left) && conditionValueIsNull(right)
 	}
 	if leftNumber, ok := numericValue(left); ok {
 		rightNumber, rightIsNumber := numericValue(right)
@@ -76,7 +146,7 @@ func strictPrimitiveEqual(left interface{}, right interface{}) bool {
 		rightValue, ok := right.(bool)
 		return ok && leftValue == rightValue
 	}
-	return false
+	return conditionValueIsNull(left) && conditionValueIsNull(right)
 }
 
 func isConditionPrimitive(value interface{}) bool {
@@ -89,8 +159,48 @@ func isConditionPrimitive(value interface{}) bool {
 	if _, ok := value.(bool); ok {
 		return true
 	}
-	_, ok := numericValue(value)
-	return ok
+	if _, ok := numericValue(value); ok {
+		return true
+	}
+	return conditionValueIsNull(value)
+}
+
+func conditionValueIsEmpty(value interface{}) (bool, bool) {
+	if value == nil {
+		return false, false
+	}
+	if stringValue, ok := value.(string); ok {
+		return len(stringValue) == 0, true
+	}
+
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Array:
+		return reflected.Len() == 0, true
+	case reflect.Slice:
+		if reflected.IsNil() {
+			return false, false
+		}
+		return reflected.Len() == 0, true
+	case reflect.Map:
+		if reflected.Type().Key().Kind() == reflect.String && !reflected.IsNil() {
+			return reflected.Len() == 0, true
+		}
+	}
+
+	return false, false
+}
+
+func conditionValueIsNull(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Slice, reflect.Map, reflect.Ptr, reflect.Interface:
+		return reflected.IsNil()
+	}
+	return false
 }
 
 type getRegex func(regexString string, regexFlags string) *regexp.Regexp
@@ -156,6 +266,22 @@ func conditionIsMatched(
 	attribute := string(condition.Attribute)
 	contextValueFromPath := getValueFromContext(context, attribute)
 	attributeExists := pathExists(context, attribute)
+	if condition.Operator == OperatorIsNull {
+		return attributeExists && conditionValueIsNull(contextValueFromPath)
+	}
+	if condition.Operator == OperatorNotNull {
+		return attributeExists && !conditionValueIsNull(contextValueFromPath)
+	}
+	if condition.Operator == OperatorEmpty || condition.Operator == OperatorNotEmpty {
+		isEmpty, supported := conditionValueIsEmpty(contextValueFromPath)
+		if !attributeExists || !supported {
+			return false
+		}
+		if condition.Operator == OperatorEmpty {
+			return isEmpty
+		}
+		return !isEmpty
+	}
 
 	// Handle nil values
 	if condition.Value == nil {
@@ -169,6 +295,28 @@ func conditionIsMatched(
 
 	value := *condition.Value
 
+	if condition.Operator == OperatorIncludesAny || condition.Operator == OperatorNotIncludesAny {
+		actual, actualOK := conditionArray(contextValueFromPath)
+		candidates, candidatesOK := conditionArray(value)
+		if !attributeExists || !actualOK || !candidatesOK {
+			return false
+		}
+		for index := 0; index < candidates.Len(); index++ {
+			if !isConditionPrimitive(candidates.Index(index).Interface()) {
+				return false
+			}
+		}
+		for index := 0; index < candidates.Len(); index++ {
+			candidate := candidates.Index(index).Interface()
+			for item := 0; item < actual.Len(); item++ {
+				if strictPrimitiveEqual(actual.Index(item).Interface(), candidate) {
+					return condition.Operator == OperatorIncludesAny
+				}
+			}
+		}
+		return condition.Operator == OperatorNotIncludesAny
+	}
+
 	// equals / notEquals
 	if condition.Operator == OperatorEquals {
 		return attributeExists && strictPrimitiveEqual(contextValueFromPath, value)
@@ -178,33 +326,9 @@ func conditionIsMatched(
 
 	// before / after (date comparisons)
 	if condition.Operator == OperatorBefore || condition.Operator == OperatorAfter {
-		var dateInContext time.Time
-		var dateInCondition time.Time
-		var err error
-
-		// Parse context value
-		switch v := contextValueFromPath.(type) {
-		case time.Time:
-			dateInContext = v
-		case string:
-			dateInContext, err = time.Parse(time.RFC3339, v)
-			if err != nil {
-				return false
-			}
-		default:
-			return false
-		}
-
-		// Parse condition value
-		switch v := value.(type) {
-		case time.Time:
-			dateInCondition = v
-		case string:
-			dateInCondition, err = time.Parse(time.RFC3339, v)
-			if err != nil {
-				return false
-			}
-		default:
+		dateInContext, contextOK := parsePortableDate(contextValueFromPath)
+		dateInCondition, conditionOK := parsePortableDate(value)
+		if !contextOK || !conditionOK {
 			return false
 		}
 
@@ -219,7 +343,7 @@ func conditionIsMatched(
 	if valueArray, ok := primitiveSliceValues(value); ok {
 		_, isString := contextValueFromPath.(string)
 		_, isNumber := numericValue(contextValueFromPath)
-		if !attributeExists || (!isString && !isNumber && contextValueFromPath != nil) {
+		if !attributeExists || (!isString && !isNumber && !conditionValueIsNull(contextValueFromPath)) {
 			return false
 		}
 		matched := false
@@ -348,4 +472,15 @@ func conditionIsMatched(
 	}
 
 	return false
+}
+
+func conditionArray(value interface{}) (reflect.Value, bool) {
+	if value == nil {
+		return reflect.Value{}, false
+	}
+	array := reflect.ValueOf(value)
+	if array.Kind() == reflect.Array {
+		return array, true
+	}
+	return array, array.Kind() == reflect.Slice && !array.IsNil()
 }

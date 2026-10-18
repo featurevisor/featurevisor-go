@@ -12,10 +12,13 @@ jobs:
   sdk:
     name: SDK (Go ${{ matrix.go }})
     runs-on: ubuntu-latest
+    env:
+      GOWORK: "off"
+      GOTOOLCHAIN: local
     strategy:
       fail-fast: false
       matrix:
-        go: ["1.21.x", "1.25.x"]
+        go: ["1.21.x", "1.26.x"]
 
     steps:
       - uses: actions/checkout@v7
@@ -40,7 +43,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: |
             go.sum
             openfeature/go.sum
@@ -60,7 +63,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
           cache-dependency-path: go.sum
 
       - uses: actions/setup-node@v7
@@ -72,7 +75,7 @@ jobs:
         run: |
           mkdir example-1
           cd example-1
-          npx --yes @featurevisor/cli@3 init --example=1
+          npx --yes @featurevisor/cli@latest init --example=1
           npm install
           npx featurevisor build
           npx featurevisor test --onlyFailures

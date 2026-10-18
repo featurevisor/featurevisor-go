@@ -8,6 +8,20 @@ import (
 	"testing"
 )
 
+func TestDiagnosticPreservesApplicationContextIdentity(t *testing.T) {
+	context := Context{}
+	context["self"] = context
+	var handler diagnosticOutputHandler = func(_ LogLevel, _ logMessage, details logDetails) {
+		observed := details["context"].(Context)
+		observed["observed"] = true
+	}
+	reporter := newDiagnosticReporter(diagnosticReporterOptions{Handler: &handler})
+	reporter.Debug("context", logDetails{"context": context})
+	if context["observed"] != true {
+		t.Fatal("expected the existing application context identity to be preserved")
+	}
+}
+
 func TestLogLevels(t *testing.T) {
 	levels := []LogLevel{
 		LogLevelFatal,
@@ -306,6 +320,26 @@ func TestCustomLogHandler(t *testing.T) {
 	}
 	if capturedDetails["key"] != expectedDetails["key"] {
 		t.Errorf("Captured details = %v, expected %v", capturedDetails, expectedDetails)
+	}
+}
+
+func TestCustomLogHandlerCanSkipUnobservedDiagnostics(t *testing.T) {
+	handled := 0
+	var customHandler diagnosticOutputHandler = func(LogLevel, logMessage, logDetails) {
+		handled++
+	}
+	diagnostics := newDiagnosticReporter(diagnosticReporterOptions{
+		Handler: &customHandler,
+		ShouldHandle: func(level LogLevel) bool {
+			return level == LogLevelError
+		},
+	})
+
+	diagnostics.Debug("unobserved", logDetails{"value": true})
+	diagnostics.Error("observed", logDetails{"value": true})
+
+	if handled != 1 {
+		t.Fatalf("expected only the observed diagnostic to reach the handler, got %d", handled)
 	}
 }
 

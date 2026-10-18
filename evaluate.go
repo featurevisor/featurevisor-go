@@ -1,9 +1,57 @@
 package featurevisor
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 )
+
+type dependencyError struct{ message string }
+
+func (e dependencyError) Error() string { return e.message }
+
+var errVariableRequirementCycle error = dependencyError{message: "Circular dependency"}
+
+type variableRequirementInputError struct{ message string }
+
+func (e variableRequirementInputError) Error() string { return e.message }
+
+func evaluationPanicError(recovered interface{}) error {
+	if err, ok := recovered.(error); ok {
+		var dependency dependencyError
+		if errors.As(err, &dependency) {
+			return err
+		}
+	}
+	if err, ok := recovered.(variableRequirementInputError); ok {
+		return err
+	}
+	return fmt.Errorf("panic: %v", recovered)
+}
+
+// isDependencyFailure reports whether err fails the complete public call. Nested
+// getters pass such failures upwards, so only the public call reports them.
+func isDependencyFailure(err error) bool {
+	var dependency dependencyError
+	var input variableRequirementInputError
+	return errors.As(err, &dependency) || errors.As(err, &input)
+}
+
+func propagateRequirementError(evaluation Evaluation) {
+	if evaluation.Reason != EvaluationReasonError {
+		return
+	}
+	var dependency dependencyError
+	if errors.As(evaluation.Error, &dependency) {
+		panic(dependency)
+	}
+	var inputError variableRequirementInputError
+	if errors.As(evaluation.Error, &inputError) {
+		panic(inputError)
+	}
+}
 
 // evaluateParams contains parameters for evaluation
 type evaluateParams struct {
@@ -16,13 +64,24 @@ type evaluateParams struct {
 // evaluateDependencies contains dependencies for evaluation
 type evaluateDependencies struct {
 	Context                        Context
+	DependencyOf                   *EvaluationDependency
+	DependencyPurpose              string
 	diagnosticReporter             *diagnosticReporter
 	modulesManager                 *modulesManager
 	instanceEvaluationDataProvider *instanceEvaluationDataProvider
 
 	// Instance-internal sticky state. Consumers configure it on an instance.
-	sticky          *StickyFeatures
-	stickyVariables *StickyVariables
+	stickyFeatures          *StickyFeatures
+	stickyVariables         *StickyVariables
+	session                 *evaluationSession
+	currentEvaluation       EvaluationDependency
+	currentEvaluationGlobal bool
+	requesterGlobalVariable bool
+	stateVersion            func() uint64
+	refreshState            func(*evaluateDependencies)
+	refreshStickyVariables  func() *StickyVariables
+	storedContextSnapshot   Context
+	seenStateVersion        uint64
 
 	DefaultVariationValue   *VariationValue
 	DefaultVariableValue    VariableValue
@@ -36,22 +95,111 @@ type EvaluateOptions struct {
 }
 
 // evaluateWithModules evaluates a feature with modules.
-func evaluateWithModules(opts EvaluateOptions) Evaluation {
-	var evaluation Evaluation
-
+func evaluateWithModules(opts EvaluateOptions) (evaluation Evaluation) {
+	if opts.session == nil {
+		opts.session = &evaluationSession{}
+	}
+	publicCall := opts.DependencyOf == nil
+	if publicCall {
+		defer func() {
+			opts.session.memo = nil
+			opts.session.active = nil
+			opts.session.frames = nil
+			opts.session.rootFrames = [2]evaluationFrameIdentity{}
+			opts.session.rootFrameCount = 0
+			opts.session.segments = nil
+			opts.session.depth = 0
+			opts.session.stickyFeatures = nil
+			opts.session.stickyVariables = nil
+			opts.session.contextSnapshot = nil
+		}()
+	}
+	if opts.DependencyOf != nil && opts.refreshState != nil {
+		opts.refreshState(&opts.evaluateDependencies)
+	}
+	originalFrame := frameIdentity(opts)
+	if opts.session.depth+len(opts.session.segments) > 256 {
+		return Evaluation{Type: opts.Type, FeatureKey: opts.FeatureKey, VariableKey: opts.VariableKey, Reason: EvaluationReasonError, Error: dependencyError{message: "Evaluation dependency depth exceeded"}}
+	}
+	if opts.session.hasFrame(originalFrame) {
+		return Evaluation{Type: opts.Type, FeatureKey: opts.FeatureKey, VariableKey: opts.VariableKey,
+			Reason: EvaluationReasonError, Error: errVariableRequirementCycle}
+	}
+	cacheKey, cacheable := opts.session.key(opts)
+	var contextSnapshot Context
+	if cacheable {
+		if opts.session.contextSnapshot != nil && sameContext(opts.session.contextSnapshot, opts.Context) {
+			contextSnapshot = opts.session.contextSnapshot
+		} else if snapshot, okay := snapshotContext(opts.Context); okay {
+			contextSnapshot = snapshot
+			opts.session.contextSnapshot = snapshot
+		}
+	}
+	startVersion := cacheKey.version
+	if !cacheable && opts.stateVersion != nil {
+		startVersion = opts.stateVersion()
+	}
+	if contextSnapshot != nil && opts.session.memo != nil {
+		for _, cached := range opts.session.memo[cacheKey] {
+			if sameContext(cached.context, opts.Context) {
+				// The snapshot is private to prerequisite comparisons.
+				return cached.value
+			}
+		}
+	}
+	rootFrame := opts.session.depth == 0
+	if rootFrame {
+		opts.session.rootFrames[0] = originalFrame
+		opts.session.rootFrameCount = 1
+	} else {
+		if opts.session.frames == nil {
+			opts.session.frames = make(map[evaluationFrameIdentity]int)
+		}
+		opts.session.frames[originalFrame]++
+	}
+	opts.session.depth++
+	defer func() {
+		opts.session.depth--
+		if rootFrame {
+			opts.session.rootFrames = [2]evaluationFrameIdentity{}
+			opts.session.rootFrameCount = 0
+			return
+		}
+		opts.session.frames[originalFrame]--
+		if opts.session.frames[originalFrame] == 0 {
+			delete(opts.session.frames, originalFrame)
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
-			opts.diagnosticReporter.Error("panic during evaluation", logDetails{
-				"error": r,
-			})
-
 			// Return error evaluation when panic occurs (matching TypeScript behavior)
 			evaluation = Evaluation{
 				Type:        opts.Type,
 				FeatureKey:  opts.FeatureKey,
 				VariableKey: opts.VariableKey,
 				Reason:      EvaluationReasonError,
-				Error:       fmt.Errorf("panic: %v", r),
+				Error:       evaluationPanicError(r),
+			}
+			if !isDependencyFailure(evaluation.Error) {
+				opts.diagnosticReporter.Error("panic during evaluation", logDetails{
+					"error": r,
+				})
+			}
+		}
+		if publicCall && evaluation.Reason == EvaluationReasonError && isDependencyFailure(evaluation.Error) {
+			opts.diagnosticReporter.Error("panic during evaluation", logDetails{
+				"error": evaluation.Error,
+			})
+		}
+		var inputError variableRequirementInputError
+		var dependency dependencyError
+		stateStable := opts.stateVersion == nil || opts.stateVersion() == startVersion
+		if cacheable && contextSnapshot != nil && stateStable && sameContext(contextSnapshot, opts.Context) && !errors.As(evaluation.Error, &dependency) && !errors.As(evaluation.Error, &inputError) {
+			if opts.session.memo == nil {
+				opts.session.memo = make(map[evaluationMemoKey][]evaluationMemoEntry)
+			}
+			if snapshot, okay := memoDependencyEvaluation(evaluation, opts.DependencyPurpose == "composition"); okay {
+				opts.session.memo[cacheKey] = append(opts.session.memo[cacheKey], evaluationMemoEntry{context: contextSnapshot, value: snapshot})
 			}
 		}
 	}()
@@ -59,18 +207,38 @@ func evaluateWithModules(opts EvaluateOptions) Evaluation {
 	modulesManager := opts.modulesManager
 	modules := modulesManager.GetAll()
 
-	// Run the legacy feature callback and the unified evaluation callback.
 	options := opts
 	for _, module := range modules {
-		if !options.GlobalVariable && module.Before != nil {
-			options = module.Before(options)
-		}
-	}
-	for _, module := range modules {
 		if module.BeforeEvaluation != nil {
-			options = module.BeforeEvaluation(options)
+			previous := options
+			options = module.BeforeEvaluation(publicModuleOptions(options))
+			restoreModuleInternals(&options, previous)
 		}
 	}
+	transformedFrame := frameIdentity(options)
+	if transformedFrame != originalFrame {
+		if rootFrame {
+			opts.session.rootFrames[1] = transformedFrame
+			opts.session.rootFrameCount = 2
+		} else {
+			opts.session.frames[transformedFrame]++
+			defer func() {
+				opts.session.frames[transformedFrame]--
+				if opts.session.frames[transformedFrame] == 0 {
+					delete(opts.session.frames, transformedFrame)
+				}
+			}()
+		}
+	}
+	if options.refreshState != nil {
+		if options.DependencyOf != nil {
+			options.refreshState(&options.evaluateDependencies)
+		} else if options.GlobalVariable && options.refreshStickyVariables != nil {
+			options.stickyVariables = options.refreshStickyVariables()
+		}
+	}
+	options.currentEvaluation = *dependencyOf(options)
+	options.currentEvaluationGlobal = options.GlobalVariable
 
 	// evaluate
 	if options.GlobalVariable {
@@ -95,40 +263,41 @@ func evaluateWithModules(opts EvaluateOptions) Evaluation {
 	}
 
 	// run after modules
-	for _, module := range modules {
+	for _, module := range modulesManager.GetAll() {
 		if module.AfterEvaluation != nil {
-			evaluation = module.AfterEvaluation(evaluation, options)
+			evaluation = module.AfterEvaluation(evaluation, publicModuleOptions(options))
 		}
 	}
-	for _, module := range modules {
-		if !options.GlobalVariable && module.After != nil {
-			evaluation = module.After(evaluation, options)
-		}
+	if options.DependencyOf != nil && evaluation.Type == EvaluationTypeVariable {
+		evaluation.VariableValue = normalizedGetterValue(evaluation, options.diagnosticReporter)
+		evaluation.getterValueNormalized = true
 	}
-
 	return evaluation
 }
 
 func cleanRequiredFeatureDependencies(dependencies evaluateDependencies) evaluateDependencies {
+	if dependencies.refreshState != nil {
+		dependencies.refreshState(&dependencies)
+	}
 	dependencies.DefaultVariationValue = nil
 	dependencies.DefaultVariableValue = nil
 	dependencies.DefaultVariableValueSet = false
+	dependencies.DependencyOf = &dependencies.currentEvaluation
+	dependencies.DependencyPurpose = "condition"
+	dependencies.requesterGlobalVariable = dependencies.currentEvaluationGlobal
 	return dependencies
 }
 
-func requiredFeatureParts(required Required) (FeatureKey, bool, *VariationValue, bool) {
+func requiredFeatureParts(required RequiredFeature) (FeatureKey, bool, *VariationValue, bool) {
 	switch value := required.(type) {
 	case string:
 		return FeatureKey(value), true, nil, true
-	case RequiredFeature:
+	case RequiredFeatureOptions:
 		expected := true
 		if value.Enabled != nil {
 			expected = *value.Enabled
 		}
 		return value.Feature, expected, value.Variation, value.Feature != ""
-	case RequiredWithVariation:
-		variation := value.Variation
-		return value.Key, true, &variation, value.Key != ""
 	case map[string]interface{}:
 		if feature, ok := value["feature"].(string); ok {
 			expected := true
@@ -142,21 +311,50 @@ func requiredFeatureParts(required Required) (FeatureKey, bool, *VariationValue,
 			}
 			return FeatureKey(feature), expected, variation, feature != ""
 		}
-		if key, ok := value["key"].(string); ok {
-			var variation *VariationValue
-			if raw, ok := value["variation"].(string); ok {
-				parsed := VariationValue(raw)
-				variation = &parsed
-			}
-			return FeatureKey(key), true, variation, key != ""
-		}
 	}
 	return "", true, nil, false
 }
 
-func requiredFeaturesAreMatched(requiredFeatures []Required, dependencies evaluateDependencies) bool {
+func groupValues(value interface{}, key string) ([]interface{}, bool) {
+	group, ok := value.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	values, ok := group[key].([]interface{})
+	return values, ok
+}
+
+func requiredFeaturesAreMatched(requiredFeatures []RequiredFeature, dependencies evaluateDependencies) bool {
 	dependencies = cleanRequiredFeatureDependencies(dependencies)
-	for _, required := range requiredFeatures {
+	var match func(RequiredFeature) bool
+	match = func(required RequiredFeature) bool {
+		if values, ok := groupValues(required, "and"); ok {
+			for _, value := range values {
+				if !match(value) {
+					return false
+				}
+			}
+			return true
+		}
+		if values, ok := groupValues(required, "or"); ok {
+			for _, value := range values {
+				if match(value) {
+					return true
+				}
+			}
+			return false
+		}
+		if values, ok := groupValues(required, "not"); ok {
+			if len(values) == 0 {
+				return false
+			}
+			for _, value := range values {
+				if !match(value) {
+					return true
+				}
+			}
+			return false
+		}
 		featureKey, expectedEnabled, expectedVariation, ok := requiredFeatureParts(required)
 		if !ok {
 			return false
@@ -165,6 +363,7 @@ func requiredFeaturesAreMatched(requiredFeatures []Required, dependencies evalua
 			evaluateParams:       evaluateParams{Type: EvaluationTypeFlag, FeatureKey: featureKey},
 			evaluateDependencies: dependencies,
 		})
+		propagateRequirementError(flag)
 		if (flag.Enabled != nil && *flag.Enabled) != expectedEnabled {
 			return false
 		}
@@ -173,6 +372,7 @@ func requiredFeaturesAreMatched(requiredFeatures []Required, dependencies evalua
 				evaluateParams:       evaluateParams{Type: EvaluationTypeVariation, FeatureKey: featureKey},
 				evaluateDependencies: dependencies,
 			})
+			propagateRequirementError(variation)
 			var actual *VariationValue
 			if variation.VariationValue != nil {
 				actual = variation.VariationValue
@@ -184,36 +384,223 @@ func requiredFeaturesAreMatched(requiredFeatures []Required, dependencies evalua
 				return false
 			}
 		}
+		return true
+	}
+	for _, required := range requiredFeatures {
+		if !match(required) {
+			return false
+		}
 	}
 	return true
 }
 
 func variableOverrideIsMatched(override VariableOverride, dependencies evaluateDependencies) bool {
-	matchedSelector := false
-	if override.Conditions != nil {
-		matchedSelector = dependencies.instanceEvaluationDataProvider.AllConditionsAreMatched(
-			dependencies.instanceEvaluationDataProvider.parseConditionsIfStringified(override.Conditions), dependencies.Context,
-		)
+	return override.Conditions != nil && conditionsAreMatched(override.Conditions, dependencies)
+}
+
+type variableRequirementIdentity struct {
+	Feature  string
+	Variable string
+}
+
+func requiredVariableParts(required RequiredVariable) (RequiredVariableOptions, bool) {
+	if value, ok := required.(RequiredVariableOptions); ok {
+		return value, value.Variable != ""
 	}
-	if override.Segments != nil {
-		segmentMatched := dependencies.instanceEvaluationDataProvider.AllSegmentsAreMatched(
-			dependencies.instanceEvaluationDataProvider.parseSegmentsIfStringified(override.Segments), dependencies.Context,
-		)
-		if override.Conditions == nil {
-			matchedSelector = segmentMatched
-		} else {
-			matchedSelector = matchedSelector && segmentMatched
+	value, ok := required.(map[string]interface{})
+	if !ok {
+		return RequiredVariableOptions{}, false
+	}
+	if _, isGroup := value["and"]; isGroup {
+		return RequiredVariableOptions{}, false
+	}
+	if _, isGroup := value["or"]; isGroup {
+		return RequiredVariableOptions{}, false
+	}
+	if _, isGroup := value["not"]; isGroup {
+		return RequiredVariableOptions{}, false
+	}
+	key, ok := value["variable"].(string)
+	if !ok || key == "" {
+		return RequiredVariableOptions{}, false
+	}
+	operator, _ := value["operator"].(string)
+	parsed := RequiredVariableOptions{Variable: key, Operator: Operator(operator), Path: value["path"], Value: value["value"]}
+	_, parsed.valueSet = value["value"]
+	if feature, ok := value["feature"].(string); ok {
+		parsed.Feature = &feature
+	}
+	if flags, ok := value["regexFlags"].(string); ok {
+		parsed.RegexFlags = &flags
+	}
+	return parsed, true
+}
+
+func normalizedGetterValue(evaluation Evaluation, diagnostics *diagnosticReporter) VariableValue {
+	if evaluation.getterValueNormalized {
+		return evaluation.VariableValue
+	}
+	if !evaluation.variableValueSet && evaluation.VariableValue == nil {
+		return nil
+	}
+	value := evaluation.VariableValue
+	variableType := VariableType("")
+	if evaluation.GlobalVariable != nil {
+		variableType = evaluation.GlobalVariable.Type
+	}
+	if evaluation.VariableSchema != nil {
+		variableType = evaluation.VariableSchema.Type
+	}
+	if variableType == VariableTypeJSON && (evaluation.GlobalVariable == nil || evaluation.GlobalVariable.Compose == nil) {
+		raw, ok := value.(string)
+		if !ok {
+			return value
+		}
+		var parsed interface{}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			if diagnostics != nil {
+				details := logDetails{
+					"variableKey": stringValue(evaluation.VariableKey),
+					"error":       err,
+				}
+				if evaluation.FeatureKey != "" {
+					details["featureKey"] = evaluation.FeatureKey
+				}
+				diagnostics.Error("getVariable failed", details)
+			}
+			return nil
+		}
+		return parsed
+	}
+	if evaluation.Reason == EvaluationReasonVariableDefault {
+		return getValueByType(value, string(variableType))
+	}
+	return value
+}
+
+func evaluateRequiredVariable(required RequiredVariableOptions, dependencies evaluateDependencies) VariableValue {
+	if dependencies.session == nil {
+		dependencies.session = &evaluationSession{}
+	}
+	if dependencies.session.active == nil {
+		dependencies.session.active = map[variableRequirementIdentity]bool{}
+	}
+	feature := ""
+	if required.Feature != nil {
+		feature = *required.Feature
+	}
+	identity := variableRequirementIdentity{Feature: feature, Variable: required.Variable}
+	if dependencies.session.active[identity] {
+		panic(errVariableRequirementCycle)
+	}
+	dependencies.session.active[identity] = true
+	defer delete(dependencies.session.active, identity)
+	clean := cleanRequiredFeatureDependencies(dependencies)
+	key := VariableKey(required.Variable)
+	params := evaluateParams{Type: EvaluationTypeVariable, VariableKey: &key}
+	if required.Feature == nil {
+		params.GlobalVariable = true
+	} else {
+		params.FeatureKey = *required.Feature
+	}
+	evaluation := evaluateWithModules(EvaluateOptions{evaluateParams: params, evaluateDependencies: clean})
+	propagateRequirementError(evaluation)
+	return normalizedGetterValue(evaluation, dependencies.diagnosticReporter)
+}
+
+func requiredVariablesAreMatched(requirements []RequiredVariable, dependencies evaluateDependencies) bool {
+	var match func(RequiredVariable) bool
+	match = func(required RequiredVariable) bool {
+		if values, ok := groupValues(required, "and"); ok {
+			for _, value := range values {
+				if !match(value) {
+					return false
+				}
+			}
+			return true
+		}
+		if values, ok := groupValues(required, "or"); ok {
+			for _, value := range values {
+				if match(value) {
+					return true
+				}
+			}
+			return false
+		}
+		if values, ok := groupValues(required, "not"); ok {
+			if len(values) == 0 {
+				return false
+			}
+			for _, value := range values {
+				if !match(value) {
+					return true
+				}
+			}
+			return false
+		}
+		leaf, ok := requiredVariableParts(required)
+		if !ok {
+			return false
+		}
+		value := evaluateRequiredVariable(leaf, dependencies)
+		exists := true
+		path, pathOK := leaf.Path.([]interface{})
+		if leaf.Path != nil && !pathOK {
+			panic(variableRequirementInputError{message: "Variable requirement path must be compiled"})
+		}
+		for _, part := range path {
+			if key, ok := part.(string); ok {
+				if unsafeMutationKeys[key] {
+					panic(variableRequirementInputError{message: "Unsafe variable requirement path"})
+				}
+				if objectValue, objectOK := variableObjectEntry(value, key); objectOK {
+					value = objectValue
+					exists = true
+					if !exists {
+						break
+					}
+					continue
+				}
+				if values, arrayOK := variableArrayValues(value); arrayOK {
+					if key == "length" {
+						value = len(values)
+						continue
+					}
+					index, err := strconv.ParseUint(key, 10, 64)
+					if err == nil && strconv.FormatUint(index, 10) == key && index < uint64(len(values)) {
+						value = values[index]
+						continue
+					}
+				}
+				exists = false
+				value = nil
+				break
+			}
+			index, indexOK := mutationIndex(part)
+			values, arrayOK := variableArrayValues(value)
+			if !indexOK || !arrayOK || index >= len(values) {
+				exists = false
+				value = nil
+				break
+			}
+			value = values[index]
+		}
+		conditionValue := (*ConditionValue)(nil)
+		if leaf.valueSet || leaf.Value != nil || (leaf.Operator != OperatorExists && leaf.Operator != OperatorNotExists && leaf.Operator != OperatorIsNull && leaf.Operator != OperatorNotNull) {
+			conditionValue = &leaf.Value
+		}
+		context := Context{}
+		if exists {
+			context["value"] = value
+		}
+		return conditionIsMatched(PlainCondition{Attribute: "value", Operator: leaf.Operator, Value: conditionValue, RegexFlags: leaf.RegexFlags}, context, dependencies.instanceEvaluationDataProvider.getRegex)
+	}
+	for _, required := range requirements {
+		if !match(required) {
+			return false
 		}
 	}
-	if len(override.RequiredFeatures) > 0 {
-		requiredMatched := requiredFeaturesAreMatched(override.RequiredFeatures, dependencies)
-		if override.Conditions == nil && override.Segments == nil {
-			matchedSelector = requiredMatched
-		} else {
-			matchedSelector = matchedSelector && requiredMatched
-		}
-	}
-	return matchedSelector
+	return true
 }
 
 func variableValueFromPointer(value *VariableValue) VariableValue {
@@ -228,16 +615,17 @@ func evaluateGlobalVariable(options EvaluateOptions) Evaluation {
 	if options.VariableKey != nil {
 		key = GlobalVariableKey(*options.VariableKey)
 	}
+	variable := options.instanceEvaluationDataProvider.GetGlobalVariable(key)
 	base := Evaluation{Type: EvaluationTypeVariable, VariableKey: options.VariableKey, Reason: EvaluationReasonVariableNotFound}
 	if options.stickyVariables != nil {
 		if value, ok := (*options.stickyVariables)[key]; ok {
 			base.Reason = EvaluationReasonSticky
+			base.GlobalVariable = variable
 			base.VariableValue = value
 			base.variableValueSet = true
 			return base
 		}
 	}
-	variable := options.instanceEvaluationDataProvider.GetGlobalVariable(key)
 	if variable == nil {
 		return base
 	}
@@ -245,58 +633,108 @@ func evaluateGlobalVariable(options EvaluateOptions) Evaluation {
 	if variable.Deprecated != nil && *variable.Deprecated {
 		options.diagnosticReporter.Warn("variable is deprecated", logDetails{"variableKey": key})
 	}
-	if !requiredFeaturesAreMatched(variable.RequiredFeatures, options.evaluateDependencies) {
-		base.Reason = EvaluationReasonRequiredFeaturesUnmet
-		if variable.UseDefaultWhenDisabled {
+	if variable.Conditions != nil && !conditionsAreMatched(variable.Conditions, options.evaluateDependencies) {
+		base.Reason = EvaluationReasonConditionsUnmet
+		base.Conditions = variable.Conditions
+		base.variableValueSet = variable.Compose != nil
+		if variable.Compose == nil && variable.UseDefaultWhenDisabled {
 			base.VariableValue = variable.DefaultValue
-			base.variableValueSet = variable.defaultValueSet
-		} else if variable.disabledValueSet {
-			base.VariableValue = variable.DisabledValue
+			base.variableValueSet = variable.defaultValueSet || variable.DefaultValue != nil
+		} else if variable.disabledValueSet || variable.DisabledValue != nil {
+			base.VariableValue = freshComposedValue(variable, variable.DisabledValue)
 			base.variableValueSet = true
 		}
 		return base
 	}
-	for index, override := range variable.Overrides {
-		if variableOverrideIsMatched(override, options.evaluateDependencies) {
-			base.Reason = EvaluationReasonVariableOverrideRule
-			base.VariableValue = override.Value
-			base.variableValueSet = true
-			base.VariableOverrideIndex = &index
-			base.VariableOverrideKey = override.Key
-			base.VariableOverridePath = override.KeyPath
+	initialValue := variable.DefaultValue
+	if variable.Compose != nil {
+		initialValue = composeValue(variable.Compose, options.evaluateDependencies)
+	}
+	if variable.OverrideProgram != nil {
+		value := initialValue
+		matchedPaths := [][]string{}
+		for index := 0; index < len(variable.OverrideProgram); {
+			step := variable.OverrideProgram[index]
+			override := VariableOverride{Key: &step.Key, KeyPath: step.KeyPath, Conditions: step.Conditions}
+			matched := variableOverrideIsMatched(override, options.evaluateDependencies)
+			if matched {
+				next, err := ApplyVariableOperations(value, step.Operations)
+				if err != nil {
+					panic(err)
+				}
+				value = next
+				path := step.KeyPath
+				if len(path) == 0 {
+					path = []string{step.Key}
+				}
+				matchedPaths = append(matchedPaths, append([]string{}, path...))
+				base.Reason = EvaluationReasonVariableOverrideRule
+				base.VariableValue = freshComposedValue(variable, value)
+				base.variableValueSet = true
+				matchedIndex := index
+				base.VariableOverrideIndex = &matchedIndex
+				base.VariableOverrideKey = &step.Key
+				base.VariableOverridePath = step.KeyPath
+				base.VariableOverridePaths = append([][]string{}, matchedPaths...)
+			}
+			nextValue := step.OnMiss
+			if matched {
+				nextValue = step.OnMatch
+			}
+			next, validNext := mutationIndex(nextValue)
+			if !validNext || next <= index || next > len(variable.OverrideProgram) {
+				panic("Invalid variable override program jump")
+			}
+			index = next
+		}
+		if base.Reason == EvaluationReasonVariableOverrideRule {
 			return base
+		}
+	} else {
+		for index, override := range variable.Overrides {
+			if variableOverrideIsMatched(override, options.evaluateDependencies) {
+				base.Reason = EvaluationReasonVariableOverrideRule
+				base.VariableValue = freshComposedValue(variable, override.Value)
+				base.variableValueSet = true
+				base.VariableOverrideIndex = &index
+				base.VariableOverrideKey = override.Key
+				base.VariableOverridePath = override.KeyPath
+				return base
+			}
 		}
 	}
 	base.Reason = EvaluationReasonVariableDefault
-	base.VariableValue = variable.DefaultValue
-	base.variableValueSet = variable.defaultValueSet
+	if variable.Compose != nil {
+		base.Reason = EvaluationReasonVariableComposed
+	}
+	base.VariableValue = initialValue
+	base.variableValueSet = variable.Compose != nil || variable.defaultValueSet || variable.DefaultValue != nil
 	return base
 }
 
 // evaluate evaluates a feature
-func evaluate(options EvaluateOptions) Evaluation {
-	var evaluation Evaluation
-
+func evaluate(options EvaluateOptions) (evaluation Evaluation) {
 	defer func() {
 		if r := recover(); r != nil {
-			// Log the panic and return an error evaluation
-			options.diagnosticReporter.Error("panic in evaluate", logDetails{
-				"panic": r,
-			})
-
-			// Return error evaluation
+			// Return an error evaluation. evaluateWithModules reports dependency
+			// failures once, for the public call.
 			evaluation = Evaluation{
 				Type:        options.Type,
 				FeatureKey:  options.FeatureKey,
 				VariableKey: options.VariableKey,
 				Reason:      EvaluationReasonError,
-				Error:       fmt.Errorf("panic: %v", r),
+				Error:       evaluationPanicError(r),
+			}
+			if !isDependencyFailure(evaluation.Error) {
+				options.diagnosticReporter.Error("panic in evaluate", logDetails{
+					"panic": r,
+				})
 			}
 		}
 	}()
 
 	// feature not found
-	feature := options.instanceEvaluationDataProvider.GetFeature(options.FeatureKey)
+	feature := options.instanceEvaluationDataProvider.getFeatureForEvaluation(options.FeatureKey)
 	if feature == nil {
 		evaluation = Evaluation{
 			Type:       options.Type,
@@ -316,25 +754,97 @@ func evaluate(options EvaluateOptions) Evaluation {
 		})
 	}
 
+	// Resolve disabled values before sticky payloads and variation availability,
+	// matching the JavaScript evaluation order.
+	/**
+	 * Root flag evaluation
+	 */
+	var flag Evaluation
+	if options.Type != EvaluationTypeFlag {
+		// needed by variation and variable evaluations
+		flag = evaluate(EvaluateOptions{
+			evaluateParams: evaluateParams{
+				Type:       EvaluationTypeFlag,
+				FeatureKey: options.FeatureKey,
+			},
+			evaluateDependencies: options.evaluateDependencies,
+		})
+		propagateRequirementError(flag)
+
+		if flag.Enabled == nil || !*flag.Enabled {
+			evaluation = Evaluation{
+				Type:       options.Type,
+				FeatureKey: options.FeatureKey,
+				Reason:     EvaluationReasonDisabled,
+			}
+
+			// serve variable default value if feature is disabled (if explicitly specified)
+			if options.Type == EvaluationTypeVariable {
+				if feature != nil && options.VariableKey != nil && feature.VariablesSchema != nil {
+					if variableSchema, exists := feature.VariablesSchema[*options.VariableKey]; exists {
+						if variableSchema.disabledValueSet {
+							// disabledValue: <value>
+							evaluation = Evaluation{
+								Type:           options.Type,
+								FeatureKey:     options.FeatureKey,
+								Reason:         EvaluationReasonVariableDisabled,
+								VariableKey:    options.VariableKey,
+								VariableValue:  variableValueFromPointer(variableSchema.DisabledValue),
+								VariableSchema: &variableSchema,
+								Enabled:        &[]bool{false}[0],
+							}
+							evaluation.variableValueSet = true
+						} else if variableSchema.UseDefaultWhenDisabled != nil && *variableSchema.UseDefaultWhenDisabled {
+							// useDefaultWhenDisabled: true
+							evaluation = Evaluation{
+								Type:           options.Type,
+								FeatureKey:     options.FeatureKey,
+								Reason:         EvaluationReasonVariableDefault,
+								VariableKey:    options.VariableKey,
+								VariableValue:  variableSchema.DefaultValue,
+								VariableSchema: &variableSchema,
+								Enabled:        &[]bool{false}[0],
+							}
+							evaluation.variableValueSet = variableSchema.defaultValueSet
+						}
+					}
+				}
+			}
+
+			// serve disabled variation value if feature is disabled (if explicitly specified)
+			if options.Type == EvaluationTypeVariation && feature != nil && feature.DisabledVariationValue != nil {
+				evaluation = Evaluation{
+					Type:           options.Type,
+					FeatureKey:     options.FeatureKey,
+					Reason:         EvaluationReasonVariationDisabled,
+					VariationValue: feature.DisabledVariationValue,
+					Enabled:        &[]bool{false}[0],
+				}
+			}
+
+			options.diagnosticReporter.debugEvaluation("feature is disabled", evaluation)
+
+			return evaluation
+		}
+	}
+
 	/**
 	 * Sticky
 	 */
-	if options.sticky != nil {
-		if stickyFeature, exists := (*options.sticky)[options.FeatureKey]; exists {
+	if options.stickyFeatures != nil {
+		if stickyFeature, exists := (*options.stickyFeatures)[options.FeatureKey]; exists {
 			// flag
 			if options.Type == EvaluationTypeFlag {
 				enabled := stickyFeature.Enabled
 				evaluation = Evaluation{
-					Type:       options.Type,
-					FeatureKey: options.FeatureKey,
-					Reason:     EvaluationReasonSticky,
-					Sticky:     &stickyFeature,
-					Enabled:    &enabled,
+					Type:          options.Type,
+					FeatureKey:    options.FeatureKey,
+					Reason:        EvaluationReasonSticky,
+					StickyFeature: &stickyFeature,
+					Enabled:       &enabled,
 				}
 
-				options.diagnosticReporter.Debug("using sticky feature", logDetails{
-					"evaluation": evaluation,
-				})
+				options.diagnosticReporter.debugEvaluation("using sticky feature", evaluation)
 
 				return evaluation
 			}
@@ -346,13 +856,11 @@ func evaluate(options EvaluateOptions) Evaluation {
 					Type:           options.Type,
 					FeatureKey:     options.FeatureKey,
 					Reason:         EvaluationReasonSticky,
-					Sticky:         &stickyFeature,
+					StickyFeature:  &stickyFeature,
 					VariationValue: &variationValue,
 				}
 
-				options.diagnosticReporter.Debug("using sticky variation", logDetails{
-					"evaluation": evaluation,
-				})
+				options.diagnosticReporter.debugEvaluation("using sticky variation", evaluation)
 
 				return evaluation
 			}
@@ -364,15 +872,13 @@ func evaluate(options EvaluateOptions) Evaluation {
 						Type:          options.Type,
 						FeatureKey:    options.FeatureKey,
 						Reason:        EvaluationReasonSticky,
-						Sticky:        &stickyFeature,
+						StickyFeature: &stickyFeature,
 						VariableKey:   options.VariableKey,
 						VariableValue: variableValue,
 					}
 					evaluation.variableValueSet = true
 
-					options.diagnosticReporter.Debug("using sticky variable", logDetails{
-						"evaluation": evaluation,
-					})
+					options.diagnosticReporter.debugEvaluation("using sticky variable", evaluation)
 
 					return evaluation
 				}
@@ -430,82 +936,9 @@ func evaluate(options EvaluateOptions) Evaluation {
 	}
 
 	/**
-	 * Root flag evaluation
-	 */
-	var flag Evaluation
-	if options.Type != EvaluationTypeFlag {
-		// needed by variation and variable evaluations
-		flag = evaluate(EvaluateOptions{
-			evaluateParams: evaluateParams{
-				Type:       EvaluationTypeFlag,
-				FeatureKey: options.FeatureKey,
-			},
-			evaluateDependencies: options.evaluateDependencies,
-		})
-
-		if flag.Enabled != nil && !*flag.Enabled {
-			evaluation = Evaluation{
-				Type:       options.Type,
-				FeatureKey: options.FeatureKey,
-				Reason:     EvaluationReasonDisabled,
-			}
-
-			// serve variable default value if feature is disabled (if explicitly specified)
-			if options.Type == EvaluationTypeVariable {
-				if feature != nil && options.VariableKey != nil && feature.VariablesSchema != nil {
-					if variableSchema, exists := feature.VariablesSchema[*options.VariableKey]; exists {
-						if variableSchema.disabledValueSet {
-							// disabledValue: <value>
-							evaluation = Evaluation{
-								Type:           options.Type,
-								FeatureKey:     options.FeatureKey,
-								Reason:         EvaluationReasonVariableDisabled,
-								VariableKey:    options.VariableKey,
-								VariableValue:  variableValueFromPointer(variableSchema.DisabledValue),
-								VariableSchema: &variableSchema,
-								Enabled:        &[]bool{false}[0],
-							}
-							evaluation.variableValueSet = true
-						} else if variableSchema.UseDefaultWhenDisabled != nil && *variableSchema.UseDefaultWhenDisabled {
-							// useDefaultWhenDisabled: true
-							evaluation = Evaluation{
-								Type:           options.Type,
-								FeatureKey:     options.FeatureKey,
-								Reason:         EvaluationReasonVariableDefault,
-								VariableKey:    options.VariableKey,
-								VariableValue:  variableSchema.DefaultValue,
-								VariableSchema: &variableSchema,
-								Enabled:        &[]bool{false}[0],
-							}
-							evaluation.variableValueSet = variableSchema.defaultValueSet
-						}
-					}
-				}
-			}
-
-			// serve disabled variation value if feature is disabled (if explicitly specified)
-			if options.Type == EvaluationTypeVariation && feature != nil && feature.DisabledVariationValue != nil {
-				evaluation = Evaluation{
-					Type:           options.Type,
-					FeatureKey:     options.FeatureKey,
-					Reason:         EvaluationReasonVariationDisabled,
-					VariationValue: feature.DisabledVariationValue,
-					Enabled:        &[]bool{false}[0],
-				}
-			}
-
-			options.diagnosticReporter.Debug("feature is disabled", logDetails{
-				"evaluation": evaluation,
-			})
-
-			return evaluation
-		}
-	}
-
-	/**
 	 * Forced
 	 */
-	forceResult := options.instanceEvaluationDataProvider.GetMatchedForce(feature, options.Context)
+	forceResult := matchedForce(feature, options.evaluateDependencies)
 
 	if forceResult.Force != nil {
 		force := forceResult.Force
@@ -522,9 +955,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 				Enabled:    force.Enabled,
 			}
 
-			options.diagnosticReporter.Debug("forced enabled found", logDetails{
-				"evaluation": evaluation,
-			})
+			options.diagnosticReporter.debugEvaluation("forced enabled found", evaluation)
 
 			return evaluation
 		}
@@ -543,9 +974,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 						VariationValue: &variation.Value,
 					}
 
-					options.diagnosticReporter.Debug("forced variation found", logDetails{
-						"evaluation": evaluation,
-					})
+					options.diagnosticReporter.debugEvaluation("forced variation found", evaluation)
 
 					return evaluation
 				}
@@ -567,42 +996,17 @@ func evaluate(options EvaluateOptions) Evaluation {
 				}
 				evaluation.variableValueSet = true
 
-				options.diagnosticReporter.Debug("forced variable", logDetails{
-					"evaluation": evaluation,
-				})
+				options.diagnosticReporter.debugEvaluation("forced variable", evaluation)
 
 				return evaluation
 			}
 		}
 	}
 
-	/**
-	 * Required
-	 */
-	if options.Type == EvaluationTypeFlag {
-		requiredFeatures := feature.RequiredFeatures
-		if len(requiredFeatures) == 0 {
-			requiredFeatures = feature.Required
-		}
-		if len(requiredFeatures) > 0 && !requiredFeaturesAreMatched(requiredFeatures, options.evaluateDependencies) {
-			evaluation = Evaluation{
-				Type:       options.Type,
-				FeatureKey: options.FeatureKey,
-				Reason:     EvaluationReasonRequired,
-				Enabled:    &[]bool{false}[0],
-			}
-			if len(feature.RequiredFeatures) > 0 {
-				evaluation.RequiredFeatures = feature.RequiredFeatures
-			} else {
-				evaluation.Required = feature.Required
-			}
-
-			options.diagnosticReporter.Debug("required features not enabled", logDetails{
-				"evaluation": evaluation,
-			})
-
-			return evaluation
-		}
+	if options.Type == EvaluationTypeFlag && feature.Conditions != nil && !conditionsAreMatched(feature.Conditions, options.evaluateDependencies) {
+		evaluation = Evaluation{Type: options.Type, FeatureKey: options.FeatureKey, Reason: EvaluationReasonConditionsUnmet, Enabled: &[]bool{false}[0], Conditions: feature.Conditions}
+		options.diagnosticReporter.debugEvaluation("root conditions did not match", evaluation)
+		return evaluation
 	}
 
 	/**
@@ -645,13 +1049,13 @@ func evaluate(options EvaluateOptions) Evaluation {
 	var matchedAllocation *Allocation
 
 	if options.Type != EvaluationTypeFlag {
-		matchedTraffic = options.instanceEvaluationDataProvider.GetMatchedTraffic(feature.Traffic, options.Context)
+		matchedTraffic = matchedTrafficForEvaluation(feature.Traffic, options.evaluateDependencies)
 
 		if matchedTraffic != nil {
 			matchedAllocation = options.instanceEvaluationDataProvider.GetMatchedAllocation(matchedTraffic, bucketValue)
 		}
 	} else {
-		matchedTraffic = options.instanceEvaluationDataProvider.GetMatchedTraffic(feature.Traffic, options.Context)
+		matchedTraffic = matchedTrafficForEvaluation(feature.Traffic, options.evaluateDependencies)
 	}
 
 	if matchedTraffic != nil {
@@ -668,67 +1072,13 @@ func evaluate(options EvaluateOptions) Evaluation {
 				Enabled:     &[]bool{false}[0],
 			}
 
-			options.diagnosticReporter.Debug("matched rule with 0 percentage", logDetails{
-				"evaluation": evaluation,
-			})
+			options.diagnosticReporter.debugEvaluation("matched rule with 0 percentage", evaluation)
 
 			return evaluation
 		}
 
 		// flag
 		if options.Type == EvaluationTypeFlag {
-			// flag: check if mutually exclusive
-			if feature.Ranges != nil && len(feature.Ranges) > 0 {
-				var matchedRange *Range
-				for _, rangeItem := range feature.Ranges {
-					if bucketValue >= rangeItem[0] && bucketValue < rangeItem[1] {
-						matchedRange = &rangeItem
-						break
-					}
-				}
-
-				// matched
-				if matchedRange != nil {
-					enabled := true
-					if matchedTraffic.Enabled != nil {
-						enabled = *matchedTraffic.Enabled
-					}
-
-					evaluation = Evaluation{
-						Type:        options.Type,
-						FeatureKey:  options.FeatureKey,
-						Reason:      EvaluationReasonAllocated,
-						BucketKey:   &bucketKey,
-						BucketValue: &bucketValue,
-						RuleKey:     &matchedTraffic.Key,
-						Traffic:     matchedTraffic,
-						Enabled:     &enabled,
-					}
-
-					options.diagnosticReporter.Debug("matched", logDetails{
-						"evaluation": evaluation,
-					})
-
-					return evaluation
-				}
-
-				// no match
-				evaluation = Evaluation{
-					Type:        options.Type,
-					FeatureKey:  options.FeatureKey,
-					Reason:      EvaluationReasonOutOfRange,
-					BucketKey:   &bucketKey,
-					BucketValue: &bucketValue,
-					Enabled:     &[]bool{false}[0],
-				}
-
-				options.diagnosticReporter.Debug("not matched", logDetails{
-					"evaluation": evaluation,
-				})
-
-				return evaluation
-			}
-
 			// flag: override from rule
 			if matchedTraffic.Enabled != nil {
 				evaluation = Evaluation{
@@ -742,9 +1092,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 					Enabled:     matchedTraffic.Enabled,
 				}
 
-				options.diagnosticReporter.Debug("override from rule", logDetails{
-					"evaluation": evaluation,
-				})
+				options.diagnosticReporter.debugEvaluation("override from rule", evaluation)
 
 				return evaluation
 			}
@@ -762,9 +1110,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 					Enabled:     &[]bool{true}[0],
 				}
 
-				options.diagnosticReporter.Debug("matched traffic", logDetails{
-					"evaluation": evaluation,
-				})
+				options.diagnosticReporter.debugEvaluation("matched traffic", evaluation)
 
 				return evaluation
 			}
@@ -788,9 +1134,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 							VariationValue: &variation.Value,
 						}
 
-						options.diagnosticReporter.Debug("override from rule", logDetails{
-							"evaluation": evaluation,
-						})
+						options.diagnosticReporter.debugEvaluation("override from rule", evaluation)
 
 						return evaluation
 					}
@@ -859,9 +1203,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 										VariationValue: &variation.Value,
 									}
 
-									options.diagnosticReporter.Debug("allocated variation with custom weights", logDetails{
-										"evaluation": evaluation,
-									})
+									options.diagnosticReporter.debugEvaluation("allocated variation with custom weights", evaluation)
 
 									return evaluation
 								}
@@ -888,9 +1230,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 							VariationValue: &variation.Value,
 						}
 
-						options.diagnosticReporter.Debug("allocated variation", logDetails{
-							"evaluation": evaluation,
-						})
+						options.diagnosticReporter.debugEvaluation("allocated variation", evaluation)
 
 						return evaluation
 					}
@@ -912,9 +1252,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 				BucketValue: &bucketValue,
 			}
 
-			options.diagnosticReporter.Debug("variable schema not found", logDetails{
-				"evaluation": evaluation,
-			})
+			options.diagnosticReporter.debugEvaluation("variable schema not found", evaluation)
 
 			return evaluation
 		}
@@ -943,9 +1281,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 							}
 							evaluation.variableValueSet = true
 
-							options.diagnosticReporter.Debug("variable override from rule", logDetails{
-								"evaluation": evaluation,
-							})
+							options.diagnosticReporter.debugEvaluation("variable override from rule", evaluation)
 
 							return evaluation
 						}
@@ -969,9 +1305,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 					}
 					evaluation.variableValueSet = true
 
-					options.diagnosticReporter.Debug("override from rule", logDetails{
-						"evaluation": evaluation,
-					})
+					options.diagnosticReporter.debugEvaluation("override from rule", evaluation)
 
 					return evaluation
 				}
@@ -1019,9 +1353,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 									}
 									evaluation.variableValueSet = true
 
-									options.diagnosticReporter.Debug("variable override from variation", logDetails{
-										"evaluation": evaluation,
-									})
+									options.diagnosticReporter.debugEvaluation("variable override from variation", evaluation)
 
 									return evaluation
 								}
@@ -1050,9 +1382,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 							}
 							evaluation.variableValueSet = true
 
-							options.diagnosticReporter.Debug("allocated variable", logDetails{
-								"evaluation": evaluation,
-							})
+							options.diagnosticReporter.debugEvaluation("allocated variable", evaluation)
 
 							return evaluation
 						}
@@ -1075,9 +1405,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 			}
 			evaluation.variableValueSet = variableSchema.defaultValueSet
 
-			options.diagnosticReporter.Debug("using default value", logDetails{
-				"evaluation": evaluation,
-			})
+			options.diagnosticReporter.debugEvaluation("using default value", evaluation)
 
 			return evaluation
 		}
@@ -1092,9 +1420,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 			BucketValue: &bucketValue,
 		}
 
-		options.diagnosticReporter.Debug("variable not found", logDetails{
-			"evaluation": evaluation,
-		})
+		options.diagnosticReporter.debugEvaluation("variable not found", evaluation)
 
 		return evaluation
 	}
@@ -1111,9 +1437,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 			BucketValue: &bucketValue,
 		}
 
-		options.diagnosticReporter.Debug("no matched variation", logDetails{
-			"evaluation": evaluation,
-		})
+		options.diagnosticReporter.debugEvaluation("no matched variation", evaluation)
 
 		return evaluation
 	}
@@ -1132,9 +1456,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 			}
 			evaluation.variableValueSet = variableSchema.defaultValueSet
 
-			options.diagnosticReporter.Debug("using default value", logDetails{
-				"evaluation": evaluation,
-			})
+			options.diagnosticReporter.debugEvaluation("using default value", evaluation)
 
 			return evaluation
 		}
@@ -1148,9 +1470,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 			BucketValue: &bucketValue,
 		}
 
-		options.diagnosticReporter.Debug("variable not found", logDetails{
-			"evaluation": evaluation,
-		})
+		options.diagnosticReporter.debugEvaluation("variable not found", evaluation)
 
 		return evaluation
 	}
@@ -1164,9 +1484,7 @@ func evaluate(options EvaluateOptions) Evaluation {
 		Enabled:     &[]bool{false}[0],
 	}
 
-	options.diagnosticReporter.Debug("nothing matched", logDetails{
-		"evaluation": evaluation,
-	})
+	options.diagnosticReporter.debugEvaluation("nothing matched", evaluation)
 
 	return evaluation
 }

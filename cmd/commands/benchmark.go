@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	featurevisor "github.com/featurevisor/featurevisor-go/v3"
+	featurevisor "github.com/featurevisor/featurevisor-go/v4"
 )
 
 // BenchmarkOutput represents the result of a benchmark operation
@@ -138,35 +138,30 @@ func prettyDuration(duration time.Duration) string {
 }
 
 // runBenchmark runs the benchmark command
-func runBenchmark(opts CLIOptions) {
-	featurevisorProjectPath := opts.ProjectDirectoryPath
-
-	if opts.Environment == "" {
-		fmt.Println("Environment is required")
-		return
-	}
-
+func runBenchmark(opts CLIOptions) error {
 	if opts.Feature == "" && opts.Variable == "" {
-		fmt.Println("Feature or global variable is required")
-		return
+		return fmt.Errorf("--feature or --variable is required")
 	}
-
-	if len(opts.Targets) > 1 {
-		for _, target := range opts.Targets {
-			selected := opts
-			selected.Targets = []string{target}
-			runBenchmark(selected)
+	if opts.Variation && opts.Variable != "" {
+		return fmt.Errorf("--variation and --variable cannot be used together")
+	}
+	context, err := evaluationContext(opts)
+	if err != nil {
+		return err
+	}
+	selections, err := resolveEvaluationSelections(opts)
+	if err != nil {
+		return err
+	}
+	for _, selected := range selections {
+		if err := benchmarkSelection(selected, context); err != nil {
+			return err
 		}
-		return
 	}
+	return nil
+}
 
-	var context featurevisor.Context
-	if opts.Context != "" {
-		json.Unmarshal([]byte(opts.Context), &context)
-	} else {
-		context = make(featurevisor.Context)
-	}
-
+func benchmarkSelection(opts CLIOptions, context featurevisor.Context) error {
 	levelStr := getLoggerLevel(opts)
 	level := featurevisor.LogLevel(levelStr)
 
@@ -183,22 +178,18 @@ func runBenchmark(opts CLIOptions) {
 	if len(opts.Targets) == 1 {
 		target = &opts.Targets[0]
 	}
-	datafile := buildDatafileJSON(featurevisorProjectPath, &opts.Environment, opts.Inflate, target)
+	datafileContent, datafileSize, err := buildEvaluationDatafile(opts)
+	if err != nil {
+		return err
+	}
 	datafileBuildDuration := time.Since(datafileBuildStart)
 	// Convert to milliseconds to match TypeScript behavior
 	datafileBuildDurationMs := datafileBuildDuration.Milliseconds()
 	fmt.Printf("Datafile build duration: %dms\n", datafileBuildDurationMs)
 
-	// Convert datafile to proper format
-	var datafileContent featurevisor.DatafileContent
-	var datafileBytes []byte
-	var err error
-	if datafileBytes, err = json.Marshal(datafile); err == nil {
-		json.Unmarshal(datafileBytes, &datafileContent)
+	if opts.Set != "" {
+		fmt.Printf("Set: %s\n", opts.Set)
 	}
-
-	// Calculate datafile size
-	datafileSize := len(datafileBytes)
 	if target != nil {
 		fmt.Printf("Target: %s\n", *target)
 	}
@@ -208,6 +199,7 @@ func runBenchmark(opts CLIOptions) {
 		Datafile: datafileContent,
 		LogLevel: &level,
 	})
+	defer instance.Close()
 	fmt.Println("...SDK initialized")
 
 	fmt.Println("")
@@ -252,4 +244,5 @@ func runBenchmark(opts CLIOptions) {
 	fmt.Printf("Minimum duration: %s\n", formatDurationMs(output.MinDuration))
 	fmt.Printf("Average duration: %s\n", formatDurationMs(output.AverageDuration))
 	fmt.Printf("Maximum duration: %s\n", formatDurationMs(output.MaxDuration))
+	return nil
 }

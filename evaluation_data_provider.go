@@ -3,6 +3,7 @@ package featurevisor
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -22,26 +23,36 @@ type forceResult struct {
 
 // instanceEvaluationDataProvider provides functionality to read and query datafile content
 type instanceEvaluationDataProvider struct {
-	schemaVersion string
-	revision      string
-	segments      map[SegmentKey]Segment
-	features      map[FeatureKey]Feature
-	variables     map[GlobalVariableKey]GlobalVariable
-	diagnostics   *diagnosticReporter
-	regexCache    map[string]*regexp.Regexp
-	regexCacheMu  sync.RWMutex
+	entityMu          sync.Mutex
+	entities          map[string]interface{}
+	entitySlots       map[string]*normalizedEntitySlot
+	schemaVersion     string
+	revision          string
+	segments          map[SegmentKey]Segment
+	features          map[FeatureKey]Feature
+	variables         map[GlobalVariableKey]GlobalVariable
+	diagnostics       *diagnosticReporter
+	regexCache        map[string]*regexp.Regexp
+	regexCacheMu      sync.RWMutex
+	expressionCache   map[string]interface{}
+	expressionCacheMu sync.RWMutex
+	expressionCacheOn bool
 }
 
 // newInstanceEvaluationDataProvider creates an evaluation data provider.
 func newInstanceEvaluationDataProvider(options instanceEvaluationDataProviderOptions) *instanceEvaluationDataProvider {
 	return &instanceEvaluationDataProvider{
-		schemaVersion: options.Datafile.SchemaVersion,
-		revision:      options.Datafile.Revision,
-		segments:      options.Datafile.Segments,
-		features:      options.Datafile.Features,
-		variables:     options.Datafile.Variables,
-		diagnostics:   options.diagnosticReporter,
-		regexCache:    make(map[string]*regexp.Regexp),
+		entities:          make(map[string]interface{}),
+		entitySlots:       make(map[string]*normalizedEntitySlot),
+		schemaVersion:     options.Datafile.SchemaVersion,
+		revision:          options.Datafile.Revision,
+		segments:          options.Datafile.Segments,
+		features:          options.Datafile.Features,
+		variables:         options.Datafile.Variables,
+		diagnostics:       options.diagnosticReporter,
+		regexCache:        make(map[string]*regexp.Regexp),
+		expressionCache:   make(map[string]interface{}),
+		expressionCacheOn: true,
 	}
 }
 
@@ -80,9 +91,20 @@ func (d *instanceEvaluationDataProvider) GetSegment(segmentKey SegmentKey) *Segm
 		return nil
 	}
 
-	segment.Conditions = d.parseConditionsIfStringified(segment.Conditions)
+	segment = *d.normalizedEntity("segment", segmentKey, segment).(*Segment)
+	if cloned, ok := cloneMemoValue(reflect.ValueOf(segment.Conditions), 0); ok && cloned.IsValid() {
+		segment.Conditions = cloned.Interface()
+	}
 
 	return &segment
+}
+
+func (d *instanceEvaluationDataProvider) getSegmentForEvaluation(segmentKey SegmentKey) *Segment {
+	segment, exists := d.segments[segmentKey]
+	if !exists {
+		return nil
+	}
+	return d.normalizedEntity("segment", segmentKey, segment).(*Segment)
 }
 
 // GetFeatureKeys returns all feature keys
@@ -96,20 +118,28 @@ func (d *instanceEvaluationDataProvider) GetFeatureKeys() []string {
 
 // GetFeature returns a feature by its key
 func (d *instanceEvaluationDataProvider) GetFeature(featureKey FeatureKey) *Feature {
+	feature := d.getFeatureForEvaluation(featureKey)
+	if feature == nil {
+		return nil
+	}
+	copy := *feature
+	return &copy
+}
+
+func (d *instanceEvaluationDataProvider) getFeatureForEvaluation(featureKey FeatureKey) *Feature {
+	identity := "feature:" + featureKey
+	d.entityMu.Lock()
+	if cached, exists := d.entities[identity]; exists {
+		d.entityMu.Unlock()
+		return cached.(*Feature)
+	}
+	d.entityMu.Unlock()
 	feature, exists := d.features[featureKey]
 	if !exists {
 		return nil
 	}
 
-	// Parse required features if they exist
-	if feature.Required != nil {
-		feature.Required = d.parseRequiredIfStringified(feature.Required)
-	}
-	if feature.RequiredFeatures != nil {
-		feature.RequiredFeatures = d.parseRequiredIfStringified(feature.RequiredFeatures)
-	}
-
-	return &feature
+	return d.normalizedEntity("feature", featureKey, feature).(*Feature)
 }
 
 // GetGlobalVariableKeys returns all independently evaluated variable keys.
@@ -127,10 +157,7 @@ func (d *instanceEvaluationDataProvider) GetGlobalVariable(variableKey GlobalVar
 	if !exists {
 		return nil
 	}
-	variable.RequiredFeatures = d.parseRequiredIfStringified(variable.RequiredFeatures)
-	for index := range variable.Overrides {
-		variable.Overrides[index].RequiredFeatures = d.parseRequiredIfStringified(variable.Overrides[index].RequiredFeatures)
-	}
+	variable = *d.normalizedEntity("variable", variableKey, variable).(*GlobalVariable)
 	return &variable
 }
 
@@ -185,9 +212,9 @@ func (d *instanceEvaluationDataProvider) getRegex(regexString string, regexFlags
 			panic(fmt.Sprintf("invalid regular expression flag: %c", flag))
 		}
 	}
-	pattern := regexString
+	pattern := normalizePortableRegex(regexString)
 	if goFlags != "" {
-		pattern = "(?" + goFlags + ")" + regexString
+		pattern = "(?" + goFlags + ")" + pattern
 	}
 	regex := regexp.MustCompile(pattern)
 	d.regexCacheMu.Lock()
@@ -238,8 +265,8 @@ func (d *instanceEvaluationDataProvider) AllConditionsAreMatched(conditions Cond
 		// Check if it's a plain condition
 		if attribute, ok := conditionMap["attribute"].(string); ok {
 			if operator, ok := conditionMap["operator"].(string); ok {
-				// Handle operators that don't have a value (exists, notExists)
-				if operator == "exists" || operator == "notExists" {
+				// Handle operators that don't have a value.
+				if operator == "exists" || operator == "notExists" || operator == "isNull" || operator == "notNull" || operator == "empty" || operator == "notEmpty" {
 					plainCondition := PlainCondition{
 						Attribute: AttributeKey(attribute),
 						Operator:  Operator(operator),
@@ -278,6 +305,9 @@ func (d *instanceEvaluationDataProvider) AllConditionsAreMatched(conditions Cond
 		}
 		// Check if it's an and condition
 		if andConditions, ok := conditionMap["and"].([]interface{}); ok {
+			if len(andConditions) == 0 {
+				return false
+			}
 			for _, condition := range andConditions {
 				if !d.AllConditionsAreMatched(condition, context) {
 					return false
@@ -296,12 +326,18 @@ func (d *instanceEvaluationDataProvider) AllConditionsAreMatched(conditions Cond
 		}
 		// Check if it's a not condition
 		if notCondition, ok := conditionMap["not"]; ok {
+			if children, ok := conditionArray(notCondition); !ok || children.Len() == 0 {
+				return false
+			}
 			return !d.AllConditionsAreMatched(notCondition, context)
 		}
 	}
 
 	// Handle and conditions
 	if andCondition, ok := conditions.(AndCondition); ok {
+		if len(andCondition.And) == 0 {
+			return false
+		}
 		for _, condition := range andCondition.And {
 			if !d.AllConditionsAreMatched(condition, context) {
 				return false
@@ -322,11 +358,17 @@ func (d *instanceEvaluationDataProvider) AllConditionsAreMatched(conditions Cond
 
 	// Handle not conditions
 	if notCondition, ok := conditions.(NotCondition); ok {
+		if children, ok := conditionArray(notCondition.Not); !ok || children.Len() == 0 {
+			return false
+		}
 		return !d.AllConditionsAreMatched(notCondition.Not, context)
 	}
 
 	// Handle array of conditions (from JSON unmarshaling)
 	if conditionArray, ok := conditions.([]interface{}); ok {
+		if len(conditionArray) == 0 {
+			return false
+		}
 		for _, condition := range conditionArray {
 			if !d.AllConditionsAreMatched(condition, context) {
 				return false
@@ -337,6 +379,9 @@ func (d *instanceEvaluationDataProvider) AllConditionsAreMatched(conditions Cond
 
 	// Handle array of conditions (typed)
 	if conditionArray, ok := conditions.([]Condition); ok {
+		if len(conditionArray) == 0 {
+			return false
+		}
 		for _, condition := range conditionArray {
 			if !d.AllConditionsAreMatched(condition, context) {
 				return false
@@ -375,7 +420,7 @@ func (d *instanceEvaluationDataProvider) AllSegmentsAreMatched(groupSegments int
 
 	// Handle string segment
 	if segmentKey, ok := groupSegments.(string); ok {
-		segment := d.GetSegment(SegmentKey(segmentKey))
+		segment := d.getSegmentForEvaluation(SegmentKey(segmentKey))
 		if segment != nil {
 			matched := d.SegmentIsMatched(segment, context)
 			d.diagnostics.Debug("checked single segment", logDetails{
@@ -472,8 +517,8 @@ func (d *instanceEvaluationDataProvider) AllSegmentsAreMatched(groupSegments int
 // GetMatchedTraffic returns the matched traffic for a given context
 func (d *instanceEvaluationDataProvider) GetMatchedTraffic(traffic []Traffic, context Context) *Traffic {
 	for _, t := range traffic {
-		segments := d.parseSegmentsIfStringified(t.Segments)
-		if d.AllSegmentsAreMatched(segments, context) {
+		conditions := (&entityNormalizer{}).selectConditions(t.Conditions, t.Segments, nil, false)
+		if conditionsAreMatched(conditions, evaluateDependencies{Context: context, instanceEvaluationDataProvider: d}) {
 			d.diagnostics.Debug("matched traffic rule", logDetails{
 				"ruleKey":  t.Key,
 				"segments": t.Segments,
@@ -525,27 +570,13 @@ func (d *instanceEvaluationDataProvider) GetMatchedForce(featureKey interface{},
 	}
 
 	for i, currentForce := range feature.Force {
-		// Check conditions
-		if currentForce.Conditions != nil {
-			conditions := d.parseConditionsIfStringified(currentForce.Conditions)
-			if d.AllConditionsAreMatched(conditions, context) {
-				result.Force = &currentForce
-				result.ForceIndex = &i
-				break
-			}
-		}
-
-		// Check segments
-		if currentForce.Segments != nil {
-			segments := d.parseSegmentsIfStringified(currentForce.Segments)
-			if d.AllSegmentsAreMatched(segments, context) {
-				result.Force = &currentForce
-				result.ForceIndex = &i
-				break
-			}
+		conditions := (&entityNormalizer{}).selectConditions(currentForce.Conditions, currentForce.Segments, nil, d.schemaVersion == "2")
+		if conditionsAreMatched(conditions, evaluateDependencies{Context: context, instanceEvaluationDataProvider: d}) {
+			result.Force = &currentForce
+			result.ForceIndex = &i
+			break
 		}
 	}
-
 	return result
 }
 
@@ -556,8 +587,7 @@ func (d *instanceEvaluationDataProvider) parseConditionsIfStringified(conditions
 			return conditions
 		}
 
-		var parsedCondition Condition
-		err := json.Unmarshal([]byte(conditionStr), &parsedCondition)
+		parsedCondition, err := d.parseExpression(conditionStr)
 		if err != nil {
 			d.diagnostics.Error("Error parsing conditions", logDetails{
 				"error":      err,
@@ -572,12 +602,28 @@ func (d *instanceEvaluationDataProvider) parseConditionsIfStringified(conditions
 	return conditions
 }
 
+func (d *instanceEvaluationDataProvider) parseConditionsIfStringifiedUncached(conditions Condition) Condition {
+	conditionStr, ok := conditions.(string)
+	if !ok || conditionStr == "*" {
+		return conditions
+	}
+
+	var parsedCondition Condition
+	if err := json.Unmarshal([]byte(conditionStr), &parsedCondition); err != nil {
+		d.diagnostics.Error("Error parsing conditions", logDetails{
+			"error":      err,
+			"conditions": conditionStr,
+		})
+		return conditions
+	}
+	return parsedCondition
+}
+
 // parseSegmentsIfStringified parses segments if they are stringified
 func (d *instanceEvaluationDataProvider) parseSegmentsIfStringified(segments interface{}) interface{} {
 	if segmentStr, ok := segments.(string); ok {
 		if strings.HasPrefix(segmentStr, "{") || strings.HasPrefix(segmentStr, "[") {
-			var parsedSegments interface{}
-			err := json.Unmarshal([]byte(segmentStr), &parsedSegments)
+			parsedSegments, err := d.parseExpression(segmentStr)
 			if err != nil {
 				d.diagnostics.Error("Error parsing segments", logDetails{
 					"error":    err,
@@ -592,56 +638,56 @@ func (d *instanceEvaluationDataProvider) parseSegmentsIfStringified(segments int
 	return segments
 }
 
-// parseRequiredIfStringified parses required features if they are stringified
-func (d *instanceEvaluationDataProvider) parseRequiredIfStringified(required []Required) []Required {
-	parsedRequired := make([]Required, len(required))
+func (d *instanceEvaluationDataProvider) parseVariableOverrideSegments(segments interface{}) (interface{}, error) {
+	segmentStr, ok := segments.(string)
+	if !ok || (!strings.HasPrefix(segmentStr, "{") && !strings.HasPrefix(segmentStr, "[")) {
+		return segments, nil
+	}
+	return d.parseExpression(segmentStr)
+}
 
-	for i, req := range required {
-		// If it's already a string, it's a simple required feature
-		if reqStr, ok := req.(string); ok {
-			parsedRequired[i] = reqStr
-			continue
-		}
-
-		// If it is a map, parse either the canonical or legacy object form.
-		if reqMap, ok := req.(map[string]interface{}); ok {
-			if feature, exists := reqMap["feature"].(string); exists {
-				parsed := RequiredFeature{Feature: FeatureKey(feature)}
-				if enabled, ok := reqMap["enabled"].(bool); ok {
-					parsed.Enabled = &enabled
-				}
-				if variation, ok := reqMap["variation"].(string); ok {
-					value := VariationValue(variation)
-					parsed.Variation = &value
-				}
-				parsedRequired[i] = parsed
-				continue
-			}
-			if key, exists := reqMap["key"]; exists {
-				if variation, exists := reqMap["variation"]; exists {
-					// Convert to RequiredWithVariation
-					parsedRequired[i] = RequiredWithVariation{
-						Key:       FeatureKey(key.(string)),
-						Variation: VariationValue(variation.(string)),
-					}
-					continue
-				}
-			}
-		}
-
-		// If it's already a RequiredWithVariation, keep it as is
-		if _, ok := req.(RequiredWithVariation); ok {
-			parsedRequired[i] = req
-			continue
-		}
-		if _, ok := req.(RequiredFeature); ok {
-			parsedRequired[i] = req
-			continue
-		}
-
-		// If we can't parse it, keep the original
-		parsedRequired[i] = req
+func (d *instanceEvaluationDataProvider) parseExpression(raw string) (interface{}, error) {
+	d.expressionCacheMu.RLock()
+	cached, ok := d.expressionCache[raw]
+	cacheOn := d.expressionCacheOn
+	d.expressionCacheMu.RUnlock()
+	if ok {
+		return cached, nil
+	}
+	if !cacheOn {
+		var value interface{}
+		err := json.Unmarshal([]byte(raw), &value)
+		return value, err
 	}
 
-	return parsedRequired
+	var value interface{}
+	err := json.Unmarshal([]byte(raw), &value)
+	if err != nil {
+		return nil, err
+	}
+	d.expressionCacheMu.Lock()
+	if !d.expressionCacheOn {
+		d.expressionCacheMu.Unlock()
+		return value, nil
+	}
+	if cached, ok = d.expressionCache[raw]; ok {
+		d.expressionCacheMu.Unlock()
+		return cached, nil
+	}
+	d.expressionCache[raw] = value
+	d.expressionCacheMu.Unlock()
+	return value, nil
+}
+
+func (d *instanceEvaluationDataProvider) closeExpressionCache() {
+	d.expressionCacheMu.Lock()
+	d.expressionCache = nil
+	d.expressionCacheOn = false
+	d.expressionCacheMu.Unlock()
+}
+
+func (d *instanceEvaluationDataProvider) getCachedExpressionCount() int {
+	d.expressionCacheMu.RLock()
+	defer d.expressionCacheMu.RUnlock()
+	return len(d.expressionCache)
 }

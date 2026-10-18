@@ -152,19 +152,19 @@ func TestSetStickyVariadicSignature(t *testing.T) {
 	instance.SetStickyFeatures(sticky2, true)
 
 	// Verify that the second call replaced the first (since replace=true)
-	if instance.sticky == nil {
+	if instance.stickyFeatures == nil {
 		t.Fatal("Expected sticky features to be set")
 	}
 
-	if len(*instance.sticky) != 1 {
-		t.Errorf("Expected 1 sticky feature, got %d", len(*instance.sticky))
+	if len(*instance.stickyFeatures) != 1 {
+		t.Errorf("Expected 1 sticky feature, got %d", len(*instance.stickyFeatures))
 	}
 
-	if _, exists := (*instance.sticky)["test2"]; !exists {
+	if _, exists := (*instance.stickyFeatures)["test2"]; !exists {
 		t.Error("Expected 'test2' to exist in sticky features")
 	}
 
-	if _, exists := (*instance.sticky)["test1"]; exists {
+	if _, exists := (*instance.stickyFeatures)["test1"]; exists {
 		t.Error("Expected 'test1' to not exist in sticky features (should have been replaced)")
 	}
 }

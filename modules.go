@@ -1,5 +1,7 @@
 package featurevisor
 
+import "sync"
+
 // ConfigureBucketKeyOptions contains options for configuring bucket key
 type ConfigureBucketKeyOptions struct {
 	FeatureKey FeatureKey `json:"featureKey"`
@@ -34,11 +36,9 @@ type FeaturevisorModule struct {
 	Name string `json:"name,omitempty"`
 
 	Setup            func(api FeaturevisorModuleApi)                                 `json:"setup,omitempty"`
-	Before           func(options EvaluateOptions) EvaluateOptions                   `json:"before,omitempty"`
 	BeforeEvaluation func(options EvaluateOptions) EvaluateOptions                   `json:"beforeEvaluation,omitempty"`
 	BucketKey        ConfigureBucketKey                                              `json:"bucketKey,omitempty"`
 	BucketValue      ConfigureBucketValue                                            `json:"bucketValue,omitempty"`
-	After            func(evaluation Evaluation, options EvaluateOptions) Evaluation `json:"after,omitempty"`
 	AfterEvaluation  func(evaluation Evaluation, options EvaluateOptions) Evaluation `json:"afterEvaluation,omitempty"`
 	Close            func()                                                          `json:"close,omitempty"`
 }
@@ -61,6 +61,7 @@ type modulesManagerOptions struct {
 
 // modulesManager manages Featurevisor modules.
 type modulesManager struct {
+	mu                                 sync.RWMutex
 	modules                            []*FeaturevisorModule
 	reportDiagnostic                   featurevisorDiagnosticReporter
 	getModuleApi                       func(module *FeaturevisorModule) FeaturevisorModuleApi
@@ -92,7 +93,7 @@ func (mm *modulesManager) Add(module *FeaturevisorModule) FeaturevisorUnsubscrib
 	}
 
 	if module.Name != "" {
-		for _, existingModule := range mm.modules {
+		for _, existingModule := range mm.GetAll() {
 			if existingModule.Name == module.Name {
 				mm.reportDiagnostic(FeaturevisorDiagnostic{
 					Level:      LogLevelError,
@@ -131,9 +132,27 @@ func (mm *modulesManager) Add(module *FeaturevisorModule) FeaturevisorUnsubscrib
 		}
 	}
 
+	mm.mu.Lock()
+	if module.Name != "" {
+		for _, existingModule := range mm.modules {
+			if existingModule.Name == module.Name {
+				mm.mu.Unlock()
+				if mm.clearModuleDiagnosticSubscriptions != nil {
+					mm.clearModuleDiagnosticSubscriptions(module)
+				}
+				mm.reportDiagnostic(FeaturevisorDiagnostic{
+					Level: LogLevelError, Code: "duplicate_module", Message: "Duplicate module name", ModuleName: module.Name,
+				}, nil)
+				mm.closeModule(module)
+				return nil
+			}
+		}
+	}
 	mm.modules = append(mm.modules, module)
+	mm.mu.Unlock()
 
 	return func() {
+		mm.mu.Lock()
 		moduleExists := false
 		for _, existingModule := range mm.modules {
 			if existingModule == module {
@@ -145,6 +164,7 @@ func (mm *modulesManager) Add(module *FeaturevisorModule) FeaturevisorUnsubscrib
 		mm.modules = filterModules(mm.modules, func(existingModule *FeaturevisorModule) bool {
 			return existingModule != module
 		})
+		mm.mu.Unlock()
 		if mm.clearModuleDiagnosticSubscriptions != nil {
 			mm.clearModuleDiagnosticSubscriptions(module)
 		}
@@ -176,6 +196,7 @@ func (mm *modulesManager) closeModule(module *FeaturevisorModule) {
 
 // Remove removes modules by name.
 func (mm *modulesManager) Remove(name string) {
+	mm.mu.Lock()
 	removedModules := []*FeaturevisorModule{}
 	keptModules := []*FeaturevisorModule{}
 
@@ -188,6 +209,7 @@ func (mm *modulesManager) Remove(name string) {
 	}
 
 	mm.modules = keptModules
+	mm.mu.Unlock()
 
 	if mm.clearModuleDiagnosticSubscriptions != nil {
 		for _, module := range removedModules {
@@ -202,13 +224,17 @@ func (mm *modulesManager) Remove(name string) {
 
 // GetAll returns all modules.
 func (mm *modulesManager) GetAll() []*FeaturevisorModule {
-	return mm.modules
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+	return append([]*FeaturevisorModule{}, mm.modules...)
 }
 
 // CloseAll closes and removes all modules.
 func (mm *modulesManager) CloseAll() {
+	mm.mu.Lock()
 	modules := append([]*FeaturevisorModule{}, mm.modules...)
 	mm.modules = []*FeaturevisorModule{}
+	mm.mu.Unlock()
 
 	for _, module := range modules {
 		if mm.clearModuleDiagnosticSubscriptions != nil {
